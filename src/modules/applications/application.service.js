@@ -789,10 +789,16 @@ export const getInterviewJoinContext = async (applicationId, userId) => {
 /**
  * Check application eligibility (used by Review module)
  * @param {ObjectId} jobId - Job ID
- * @param {ObjectId} userId - User ID
- * @returns {Object} Eligibility result
+ * @param {ObjectId} userId - User ID being checked
+ * @param {ObjectId} [requesterId] - authenticated caller; must match userId unless admin
+ * @param {string} [requesterRole] - authenticated caller's role
+ * @returns {Object} Eligibility result — boolean only, no raw application document
  */
-export const checkApplicationEligibility = async (jobId, userId) => {
+export const checkApplicationEligibility = async (jobId, userId, requesterId, requesterRole) => {
+  if (requesterRole !== 'admin' && (!requesterId || requesterId.toString() !== userId.toString())) {
+    throw new HttpException(403, 'You are not authorized to check this application');
+  }
+
   const application = await Application.findOne({
     jobId,
     $or: [{ jobSeekerId: userId }, { employerId: userId }],
@@ -801,7 +807,6 @@ export const checkApplicationEligibility = async (jobId, userId) => {
 
   return {
     hasAcceptedApplication: !!application,
-    application: application || null,
   };
 };
 
