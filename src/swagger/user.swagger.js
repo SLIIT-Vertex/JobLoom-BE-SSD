@@ -365,6 +365,30 @@
 
 /**
  * @swagger
+ * /api/users/logout:
+ *   post:
+ *     tags: [Users]
+ *     summary: Log out the current session
+ *     description: Revokes the presented JWT until its natural expiry.
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current session revoked successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Logged out successfully
+ *       401:
+ *         description: Missing, invalid, expired, or revoked token
+ */
+
+/**
+ * @swagger
  * /api/users/forgot-password:
  *   post:
  *     tags: [Users]

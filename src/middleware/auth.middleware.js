@@ -1,6 +1,7 @@
 import { verifyToken } from '../utils/jwt.utils.js';
 import HttpException from '../models/http-exception.js';
 import { HTTP_STATUS } from '../config/server.config.js';
+import { isTokenRevoked } from '../modules/users/token-revocation.service.js';
 
 /**
  * Authentication Middleware
@@ -33,12 +34,17 @@ export const authenticate = async (req, res, next) => {
     // Verify token
     const decoded = verifyToken(token);
 
+    if (await isTokenRevoked(decoded.jti)) {
+      throw new HttpException(HTTP_STATUS.UNAUTHORIZED, 'Token has been revoked');
+    }
+
     // Attach user data to request
     req.user = {
       userId: decoded.userId,
       email: decoded.email,
       role: decoded.role,
     };
+    req.auth = decoded;
 
     next();
   } catch (error) {
@@ -65,11 +71,16 @@ export const optionalAuth = async (req, res, next) => {
       const token = authHeader.substring(7);
       const decoded = verifyToken(token);
 
+      if (await isTokenRevoked(decoded.jti)) {
+        return next();
+      }
+
       req.user = {
         userId: decoded.userId,
         email: decoded.email,
         role: decoded.role,
       };
+      req.auth = decoded;
     }
 
     next();

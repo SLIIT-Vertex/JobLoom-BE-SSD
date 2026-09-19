@@ -1,5 +1,6 @@
 import { verifyToken } from '../../utils/jwt.utils.js';
 import User from '../../modules/users/user.model.js';
+import { isTokenRevoked } from '../../modules/users/token-revocation.service.js';
 
 export const protect = async (req, res, next) => {
   let token;
@@ -10,11 +11,17 @@ export const protect = async (req, res, next) => {
 
       const decoded = verifyToken(token);
 
+      if (await isTokenRevoked(decoded.jti)) {
+        return res.status(401).json({ message: 'Not authorized, token revoked' });
+      }
+
       req.user = await User.findById(decoded.userId).select('-password');
 
       if (!req.user) {
         return res.status(401).json({ message: 'Not authorized, user not found' });
       }
+
+      req.auth = decoded;
 
       return next();
     } catch (error) {

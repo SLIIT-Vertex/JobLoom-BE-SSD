@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import HttpException from '../models/http-exception.js';
 
 /**
@@ -20,6 +21,7 @@ export const generateToken = (payload) => {
 
   return jwt.sign(payload, jwtSecret, {
     expiresIn,
+    jwtid: randomUUID(),
     issuer: 'jobloom-api',
     audience: 'jobloom-client',
   });
@@ -35,10 +37,16 @@ export const verifyToken = (token) => {
   const jwtSecret = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
 
   try {
-    return jwt.verify(token, jwtSecret, {
+    const decoded = jwt.verify(token, jwtSecret, {
       issuer: 'jobloom-api',
       audience: 'jobloom-client',
     });
+
+    if (!decoded.userId || !decoded.jti || !decoded.exp) {
+      throw new HttpException(401, 'Invalid token claims');
+    }
+
+    return decoded;
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
       throw new HttpException(401, 'Token has expired');

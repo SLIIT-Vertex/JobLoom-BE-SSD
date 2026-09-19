@@ -11,6 +11,8 @@ const request = (await import('supertest')).default;
 const mongoose = (await import('mongoose')).default;
 const { default: app } = await import('../../src/server.js');
 const { default: User } = await import('../../src/modules/users/user.model.js');
+const { default: RevokedToken } = await import('../../src/modules/users/revoked-token.model.js');
+const { decodeToken, generateToken } = await import('../../src/utils/jwt.utils.js');
 
 describe('User Routes - Integration Tests', () => {
   beforeAll(async () => {
@@ -20,11 +22,13 @@ describe('User Routes - Integration Tests', () => {
 
   afterAll(async () => {
     await User.deleteMany({});
+    await RevokedToken.deleteMany({});
     await mongoose.connection.close();
   });
 
   beforeEach(async () => {
     await User.deleteMany({});
+    await RevokedToken.deleteMany({});
   });
 
   describe('Registration and Verification Flow', () => {
@@ -182,6 +186,159 @@ describe('User Routes - Integration Tests', () => {
 
       expect(loginRes.status).toBe(200);
       expect(loginRes.body.token).toBeDefined();
+    });
+  });
+
+  describe('Logout Flow', () => {
+    const createUser = (email, phone) =>
+      User.create({
+        firstName: 'Logout',
+        lastName: 'Tester',
+        email,
+        phone,
+        password: 'password123',
+        role: 'job_seeker',
+        location: { village: 'A', district: 'B', province: 'C' },
+        isVerified: true,
+      });
+
+    const login = async (email) => {
+      const response = await request(app)
+        .post('/api/users/login')
+        .send({ email, password: 'password123' });
+
+      expect(response.status).toBe(200);
+      return response.body.token;
+    };
+
+    test('should revoke the current JWT and reject its reuse', async () => {
+      await createUser('logout@test.com', '94711111111');
+      const token = await login('logout@test.com');
+      const claims = decodeToken(token);
+
+      expect(claims).toEqual(
+        expect.objectContaining({
+          userId: expect.any(String),
+          jti: expect.any(String),
+          exp: expect.any(Number),
+        })
+      );
+
+      const beforeLogout = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect(beforeLogout.status).toBe(200);
+
+      const logout = await request(app)
+        .post('/api/users/logout')
+        .set('Authorization', `Bearer ${token}`);
+      expect(logout.status).toBe(200);
+      expect(logout.body.message).toBe('Logged out successfully');
+
+      const revocation = await RevokedToken.findOne({ jti: claims.jti });
+      expect(revocation).not.toBeNull();
+      expect(revocation.expiresAt.getTime()).toBe(claims.exp * 1000);
+
+      const afterLogout = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect(afterLogout.status).toBe(401);
+    });
+
+    test('should not revoke a different user session', async () => {
+      await createUser('first@test.com', '94711111112');
+      await createUser('second@test.com', '94711111113');
+      const firstToken = await login('first@test.com');
+      const secondToken = await login('second@test.com');
+
+      await request(app).post('/api/users/logout').set('Authorization', `Bearer ${firstToken}`);
+
+      const secondSession = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${secondToken}`);
+      expect(secondSession.status).toBe(200);
+      expect(secondSession.body.email).toBe('second@test.com');
+    });
+
+    test('should reject logout without authentication', async () => {
+      const response = await request(app).post('/api/users/logout');
+      expect(response.status).toBe(401);
+    });
+
+    test('should safely reject a second logout with the revoked token', async () => {
+      await createUser('twice@test.com', '94711111114');
+      const token = await login('twice@test.com');
+
+      const firstLogout = await request(app)
+        .post('/api/users/logout')
+        .set('Authorization', `Bearer ${token}`);
+      const secondLogout = await request(app)
+        .post('/api/users/logout')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(firstLogout.status).toBe(200);
+      expect(secondLogout.status).toBe(401);
+      expect(await RevokedToken.countDocuments()).toBe(1);
+    });
+
+    test('should ignore an expired revocation record before TTL cleanup', async () => {
+      await createUser('stale-revocation@test.com', '94711111116');
+      const token = await login('stale-revocation@test.com');
+      const { jti } = decodeToken(token);
+
+      await RevokedToken.create({
+        jti,
+        expiresAt: new Date(Date.now() - 1_000),
+      });
+
+      const response = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${token}`);
+      expect(response.status).toBe(200);
+    });
+
+    test('should reject the revoked JWT on admin authentication routes', async () => {
+      const admin = await createUser('admin@test.com', '94711111115');
+      admin.role = 'admin';
+      await admin.save();
+      const token = await login('admin@test.com');
+
+      await request(app).post('/api/users/logout').set('Authorization', `Bearer ${token}`);
+
+      const response = await request(app)
+        .get('/api/admin/stats')
+        .set('Authorization', `Bearer ${token}`);
+      expect(response.status).toBe(401);
+    });
+
+    test('should continue rejecting malformed and expired tokens', async () => {
+      const malformed = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', 'Bearer not-a-jwt');
+      expect(malformed.status).toBe(401);
+
+      const originalExpiry = process.env.JWT_EXPIRES_IN;
+      let expiredToken;
+
+      try {
+        process.env.JWT_EXPIRES_IN = '-1s';
+        expiredToken = generateToken({
+          userId: new mongoose.Types.ObjectId().toString(),
+          email: 'expired@test.com',
+          role: 'job_seeker',
+        });
+      } finally {
+        if (originalExpiry === undefined) {
+          delete process.env.JWT_EXPIRES_IN;
+        } else {
+          process.env.JWT_EXPIRES_IN = originalExpiry;
+        }
+      }
+
+      const expired = await request(app)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${expiredToken}`);
+      expect(expired.status).toBe(401);
     });
   });
 });
