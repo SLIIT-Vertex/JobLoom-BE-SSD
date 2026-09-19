@@ -481,11 +481,48 @@ describe('Job Routes — Integration Tests', () => {
       const res = await request(app)
         .put(`/api/jobs/${jobId}`)
         .set('Authorization', `Bearer ${employerToken}`)
-        .send({ title: 'Updated Job Title', salaryAmount: 2500 });
+        .send({
+          title: 'Updated Job Title',
+          description: 'Updated job description with legitimate editable information.',
+          salaryAmount: 2500,
+          location: {
+            district: 'Colombo',
+            coordinates: { type: 'Point', coordinates: [79.8612, 6.9271] },
+          },
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.data.title).toBe('Updated Job Title');
+      expect(res.body.data.description).toBe(
+        'Updated job description with legitimate editable information.'
+      );
       expect(res.body.data.salaryAmount).toBe(2500);
+      expect(res.body.data.location.coordinates.coordinates).toEqual([79.8612, 6.9271]);
+    });
+
+    test('should reject attempts to transfer job ownership', async () => {
+      const res = await request(app)
+        .put(`/api/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({ employerId: otherEmployerId });
+
+      expect(res.status).toBe(400);
+
+      const persistedJob = await Job.findById(jobId);
+      expect(persistedJob.employerId.toString()).toBe(employerId);
+    });
+
+    test('should reject attempts to modify internal job state', async () => {
+      const res = await request(app)
+        .put(`/api/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({ isActive: false, applicantsCount: 99 });
+
+      expect(res.status).toBe(400);
+
+      const persistedJob = await Job.findById(jobId);
+      expect(persistedJob.isActive).toBe(true);
+      expect(persistedJob.applicantsCount).toBe(0);
     });
 
     test('should return 400 when another employer tries to update', async () => {

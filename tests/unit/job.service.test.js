@@ -576,6 +576,26 @@ describe('Job Service — Unit Tests', () => {
       expect(result.salaryAmount).toBe(2000);
     });
 
+    test('should ignore protected fields when called without route validation', async () => {
+      const job = makeJob();
+      mockJobModel.findById.mockResolvedValue(job);
+
+      await updateJob(jobId.toString(), employerId.toString(), {
+        title: 'Legitimate Updated Title',
+        employerId: otherEmployerId,
+        isActive: false,
+        applicantsCount: 99,
+        _id: oid(),
+      });
+
+      expect(job.title).toBe('Legitimate Updated Title');
+      expect(job.employerId).toBe(employerId);
+      expect(job.isActive).toBe(true);
+      expect(job.applicantsCount).toBe(0);
+      expect(job._id).toBe(jobId);
+      expect(job.save).toHaveBeenCalled();
+    });
+
     test('should throw 404 when job is not found', async () => {
       mockJobModel.findById.mockResolvedValue(null);
 
