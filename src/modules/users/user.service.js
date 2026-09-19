@@ -204,12 +204,26 @@ export const logoutUser = async (tokenClaims) => {
 };
 
 /**
+ * Fields safe to expose on a user profile viewed by someone other than
+ * the profile owner (or an admin). Excludes OTP/reset secrets, phone,
+ * and other data that should stay private to the account holder.
+ */
+const PUBLIC_PROFILE_FIELDS =
+  'firstName lastName role profileImage cvs skills experience companyName companyWebsite companyDescription industry createdAt';
+
+/**
  * Get user profile
- * @param {string} id
+ * @param {string} id - profile being requested
+ * @param {Object} [requester] - the authenticated caller ({ _id, role }); when
+ *   omitted or when the caller is not the owner/admin, only public fields are returned
  * @returns {Object} user
  */
-export const getUserProfile = async (id) => {
-  const user = await User.findById(id).select('-password');
+export const getUserProfile = async (id, requester) => {
+  const isOwnerOrAdmin =
+    requester && (requester.role === 'admin' || requester._id.toString() === id.toString());
+
+  const user = await User.findById(id).select(isOwnerOrAdmin ? '-password' : PUBLIC_PROFILE_FIELDS);
+
   if (user) {
     return user;
   } else {

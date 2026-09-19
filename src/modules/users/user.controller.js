@@ -131,14 +131,9 @@ export const logoutUser = async (req, res) => {
  */
 export const getUserProfile = async (req, res) => {
   try {
-    const user = await userService.getUserProfile(req.params.id);
-    // Ensure user can only access their own profile unless admin?
-    // The requirement says "Get user profile by ID", protected route.
-    // Usually /profile or /me returns own profile, but this is /profile/:id.
-    // The requirement also says "Role-based data filtering" but detailed requirement for /profile/:id is sketchy.
-    // However, there is GET /api/users/me for current authenticated user.
-    // I will implement /me separately or alias it.
-
+    // Only the profile owner or an admin receives sensitive fields (OTP
+    // secrets, phone, location); everyone else gets a public-safe subset.
+    const user = await userService.getUserProfile(req.params.id, req.user);
     res.json(user);
   } catch (error) {
     res.status(404).json({ message: error.message });
@@ -152,7 +147,7 @@ export const getUserProfile = async (req, res) => {
  */
 export const getMyProfile = async (req, res) => {
   try {
-    const user = await userService.getUserProfile(req.user._id);
+    const user = await userService.getUserProfile(req.user._id, req.user);
     res.json(user);
   } catch (error) {
     res.status(404).json({ message: error.message });
