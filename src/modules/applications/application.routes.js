@@ -12,14 +12,14 @@ const router = express.Router();
  * All routes for Job Application management
  */
 
-// Public routes (no authentication required)
+// Protected routes (authentication required)
 
 /**
  * Check application eligibility (used by Review module)
+ * Caller must be authenticated as the userId being checked (or an admin) —
+ * this previously had no auth at all and leaked the full application record.
  */
-router.get('/check/:jobId/:userId', applicationController.checkApplicationEligibility);
-
-// Protected routes (authentication required)
+router.get('/check/:jobId/:userId', protect, applicationController.checkApplicationEligibility);
 
 /**
  * Get my applications (job seeker)

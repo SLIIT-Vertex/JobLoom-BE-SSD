@@ -169,12 +169,14 @@ export const getApplicationStats = async (req, res) => {
 /**
  * @route   GET /api/applications/check/:jobId/:userId
  * @desc    Check if user has accepted application for job (review eligibility)
- * @access  Public
+ * @access  Private (the userId being checked, or an admin)
  */
 export const checkApplicationEligibility = async (req, res) => {
   const result = await applicationService.checkApplicationEligibility(
     req.params.jobId,
-    req.params.userId
+    req.params.userId,
+    req.user._id,
+    req.user.role
   );
 
   sendSuccess(res, 'Application check completed', result);

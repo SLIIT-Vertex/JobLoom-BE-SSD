@@ -39,9 +39,13 @@ const canModifyReview = (review) => {
  * @returns {boolean} Can user review
  */
 export const canUserReview = async (reviewerId, revieweeId, jobId) => {
+  // Internal call: the reviewer is always checking their own eligibility,
+  // so reviewerId is passed as both the subject and the authorized requester.
   const { hasAcceptedApplication } = await applicationService.checkApplicationEligibility(
     jobId,
-    reviewerId
+    reviewerId,
+    reviewerId,
+    null
   );
   return hasAcceptedApplication;
 };
