@@ -75,6 +75,62 @@ describe('User Routes - Integration Tests', () => {
       expect(res.status).toBe(400);
       expect(res.body.message).toBe('Invalid or expired OTP');
     });
+
+    test('should allow employer registration', async () => {
+      const res = await request(app)
+        .post('/api/users/register')
+        .send({
+          ...userData,
+          email: 'employer@test.com',
+          phone: '94712345679',
+          role: 'employer',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.role).toBe('employer');
+      expect(await User.findOne({ email: 'employer@test.com' })).not.toBeNull();
+    });
+
+    test('should ignore server-owned account fields during registration', async () => {
+      const res = await request(app)
+        .post('/api/users/register')
+        .send({
+          ...userData,
+          email: 'mass-assignment@test.com',
+          phone: '94712345671',
+          isVerified: true,
+          isActive: false,
+          passwordResetOtp: 'attacker-controlled',
+          passwordResetOtpExpires: new Date(Date.now() + 60_000).toISOString(),
+        });
+
+      expect(res.status).toBe(201);
+
+      const user = await User.findOne({ email: 'mass-assignment@test.com' });
+      expect(user.isVerified).toBe(false);
+      expect(user.isActive).toBe(true);
+      expect(user.passwordResetOtp).toBeNull();
+      expect(user.passwordResetOtpExpires).toBeNull();
+    });
+
+    test('should reject public registration with the admin role', async () => {
+      const res = await request(app)
+        .post('/api/users/register')
+        .send({
+          ...userData,
+          firstName: 'Attack',
+          lastName: 'User',
+          email: 'attack@test.com',
+          phone: '94712345670',
+          role: 'admin',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: 'role' })])
+      );
+      expect(await User.findOne({ email: 'attack@test.com' })).toBeNull();
+    });
   });
 
   describe('Forgot Password Flow', () => {

@@ -175,7 +175,7 @@
  *                 example: secure123
  *               role:
  *                 type: string
- *                 enum: [job_seeker, employer, admin]
+ *                 enum: [job_seeker, employer]
  *                 example: job_seeker
  *               phone:
  *                 type: string

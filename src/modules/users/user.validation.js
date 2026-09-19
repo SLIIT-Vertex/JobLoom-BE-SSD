@@ -1,11 +1,12 @@
 import { body } from 'express-validator';
+import { PUBLIC_REGISTRATION_ROLES } from './user.constants.js';
 
 export const registerValidation = [
   body('firstName').notEmpty().withMessage('First name is required'),
   body('lastName').notEmpty().withMessage('Last name is required'),
   body('email').isEmail().withMessage('Please provide a valid email'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
-  body('role').isIn(['job_seeker', 'employer', 'admin']).withMessage('Invalid role'),
+  body('role').isIn(PUBLIC_REGISTRATION_ROLES).withMessage('Role must be job_seeker or employer'),
   body('phone').notEmpty().withMessage('Phone number is required'),
   body('location.village').notEmpty().withMessage('Village is required'),
   body('location.district').notEmpty().withMessage('District is required'),
