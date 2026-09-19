@@ -115,6 +115,16 @@ export const loginUser = async (req, res) => {
 };
 
 /**
+ * @desc    Revoke the current authenticated JWT
+ * @route   POST /api/users/logout
+ * @access  Private
+ */
+export const logoutUser = async (req, res) => {
+  const result = await userService.logoutUser(req.auth);
+  res.json(result);
+};
+
+/**
  * @desc    Get user profile
  * @route   GET /api/users/profile/:id
  * @access  Private
@@ -255,6 +265,7 @@ export default {
   registerUser,
   verifyRegistration,
   loginUser,
+  logoutUser,
   getUserProfile,
   getMyProfile,
   updateUserProfile,

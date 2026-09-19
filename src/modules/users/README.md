@@ -37,6 +37,7 @@ The **User Management Module** handles all aspects of the user lifecycle on the 
 | **Registration**       | Create a new account with OTP-based phone verification           |
 | **OTP Verification**   | Verify phone number via 6-digit SMS OTP on registration          |
 | **Authentication**     | Email/password login returning a JWT token                       |
+| **Logout**             | Revoke the current JWT session until its signed expiry           |
 | **Forgot Password**    | Request a password reset OTP via SMS                             |
 | **Password Reset**     | Verify OTP then set a new password using a secure reset token    |
 | **Profile Management** | View and update personal details, skills, and experience         |
@@ -87,9 +88,11 @@ HTTP Request
 
 ```
 src/modules/users/
-├── user.routes.js       ← Express router (10 routes)
-├── user.controller.js   ← Request handlers (10 controllers)
-├── user.service.js      ← Business logic (9 service functions)
+├── revoked-token.model.js      ← Revoked JWT identifiers with TTL cleanup
+├── token-revocation.service.js ← Revoke/check JWT identifiers
+├── user.routes.js       ← Express router
+├── user.controller.js   ← Request handlers
+├── user.service.js      ← Business logic
 ├── user.model.js        ← Mongoose schema + model
 ├── user.validation.js   ← express-validator rules (4 validators)
 └── README.md            ← This file
@@ -157,6 +160,7 @@ uploads/
 | **Virtuals**         | `fullName` computed from `firstName + lastName`         |
 | **Timestamps**       | `createdAt` and `updatedAt` auto-managed                |
 | **Soft delete**      | `isActive: false` instead of removing documents         |
+| **TTL index**        | Removes revoked JWT identifiers after token expiry      |
 
 ### Middleware Used
 
@@ -246,6 +250,7 @@ const userSchema = new Schema({
 | `POST`   | `/api/users/register`              | Public  | Register a new user account        |
 | `POST`   | `/api/users/verify-registration`   | Public  | Verify registration OTP            |
 | `POST`   | `/api/users/login`                 | Public  | Login and receive JWT token        |
+| `POST`   | `/api/users/logout`                | Private | Revoke the current JWT session     |
 | `POST`   | `/api/users/forgot-password`       | Public  | Request password reset OTP via SMS |
 | `POST`   | `/api/users/verify-password-reset` | Public  | Verify password reset OTP          |
 | `POST`   | `/api/users/reset-password`        | Public  | Reset password using reset token   |
@@ -664,13 +669,22 @@ Client sends: Authorization: Bearer <token>
          ▼
 protect middleware
   ├── Verify token signature with jwtSecret
-  ├── Decode payload { id }
+  ├── Validate payload { userId, jti, exp }
+  ├── Reject jti while it exists in the revocation collection
   ├── Find user by id in DB
   └── Attach user to req.user
          │
          ▼
 Controller receives req.user (full user document)
 ```
+
+### Logout and revocation
+
+`POST /api/users/logout` stores only the current token's random `jti` and
+expiry—not the raw JWT. Authentication checks this collection before accepting
+the token. The expiry query ignores stale records immediately, and MongoDB's TTL
+index deletes them automatically. Persistent storage is required so revocation
+continues to work across server restarts and multiple backend instances.
 
 ---
 

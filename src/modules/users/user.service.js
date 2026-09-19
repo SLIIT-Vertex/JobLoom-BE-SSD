@@ -3,6 +3,7 @@ import * as smsService from '../../services/sms.service.js';
 import crypto from 'crypto';
 import { generateToken as jwtGenerateToken } from '../../utils/jwt.utils.js';
 import { PUBLIC_REGISTRATION_ROLES } from './user.constants.js';
+import { revokeToken } from './token-revocation.service.js';
 
 const generateToken = (user) => {
   return jwtGenerateToken({
@@ -197,6 +198,11 @@ export const loginUser = async (email, password) => {
   }
 };
 
+export const logoutUser = async (tokenClaims) => {
+  await revokeToken(tokenClaims);
+  return { message: 'Logged out successfully' };
+};
+
 /**
  * Get user profile
  * @param {string} id
@@ -310,6 +316,7 @@ export default {
   registerUser,
   verifyRegistration,
   loginUser,
+  logoutUser,
   getUserProfile,
   updateUserProfile,
   deleteUser,
