@@ -5,6 +5,25 @@ import { BadRequestException, NotFoundException } from '../../models/http-except
 import logger from '../../config/logger.config.js';
 import envConfig from '../../config/env.config.js';
 
+const JOB_UPDATE_FIELDS = [
+  'title',
+  'description',
+  'category',
+  'categoryLabel',
+  'jobRole',
+  'employmentType',
+  'location',
+  'salaryType',
+  'salaryAmount',
+  'currency',
+  'skillsRequired',
+  'experienceRequired',
+  'positions',
+  'status',
+  'startDate',
+  'endDate',
+];
+
 /**
  * Job Service
  * Business logic for job management
@@ -619,8 +638,13 @@ export const updateJob = async (jobId, employerId, updateData) => {
       throw new BadRequestException('Cannot update inactive job');
     }
 
-    // Update fields
-    Object.assign(job, updateData);
+    // Assign only fields supported by the employer update API. Ownership,
+    // counters, soft-delete state, timestamps, and document IDs remain server-owned.
+    for (const field of JOB_UPDATE_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(updateData, field)) {
+        job[field] = updateData[field];
+      }
+    }
 
     // Keep category/categoryLabel consistent when category is changed
     if (Object.prototype.hasOwnProperty.call(updateData, 'category')) {

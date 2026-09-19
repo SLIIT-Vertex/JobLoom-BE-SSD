@@ -1,4 +1,4 @@
-import { body, param, query } from 'express-validator';
+import { body, checkExact, param, query } from 'express-validator';
 
 /**
  * Validation schemas for job endpoints
@@ -225,6 +225,11 @@ export const updateJobValidation = [
     .isString()
     .withMessage('Full address must be a string'),
 
+  body('location.coordinates.type')
+    .optional()
+    .equals('Point')
+    .withMessage('Coordinate type must be Point'),
+
   body('location.coordinates.coordinates')
     .optional()
     .isArray({ min: 2, max: 2 })
@@ -272,6 +277,11 @@ export const updateJobValidation = [
   body('startDate').optional().isISO8601().withMessage('Start date must be a valid ISO 8601 date'),
 
   body('endDate').optional().isISO8601().withMessage('End date must be a valid ISO 8601 date'),
+
+  checkExact([], {
+    locations: ['body'],
+    message: 'Unexpected field(s) in job update',
+  }),
 ];
 
 /**
