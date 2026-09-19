@@ -56,7 +56,11 @@ describe('User Service Unit Tests', () => {
         email: 'john@example.com',
         phone: '94712345678',
         password: 'password123',
+        role: 'job_seeker',
         location: { village: 'A', district: 'B', province: 'C' },
+        isVerified: true,
+        isActive: false,
+        passwordResetOtp: 'attacker-controlled',
       };
 
       mockUserModel.findOne.mockResolvedValue(null);
@@ -69,7 +73,20 @@ describe('User Service Unit Tests', () => {
       const result = await registerUser(userData);
 
       expect(mockUserModel.findOne).toHaveBeenCalledWith({ email: userData.email });
-      expect(mockUserModel.create).toHaveBeenCalled();
+      expect(mockUserModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          email: userData.email,
+          password: userData.password,
+          phone: userData.phone,
+          role: userData.role,
+          location: userData.location,
+          isVerified: false,
+          isActive: true,
+        })
+      );
+      expect(mockUserModel.create.mock.calls[0][0]).not.toHaveProperty('passwordResetOtp');
       expect(mockSmsService.sendOtp).toHaveBeenCalledWith(userData.phone, expect.any(String));
       expect(result).toHaveProperty('_id', 'userid123');
       expect(result.isVerified).toBe(false);
@@ -78,9 +95,22 @@ describe('User Service Unit Tests', () => {
     test('should throw error if user exists', async () => {
       mockUserModel.findOne.mockResolvedValue({ _id: 'existing' });
 
-      await expect(registerUser({ email: 'john@example.com' })).rejects.toThrow(
+      await expect(registerUser({ email: 'john@example.com', role: 'job_seeker' })).rejects.toThrow(
         'User already exists'
       );
+    });
+
+    test('should reject privileged roles', async () => {
+      await expect(
+        registerUser({
+          email: 'attack@example.com',
+          phone: '94712345670',
+          role: 'admin',
+        })
+      ).rejects.toThrow('Invalid role for public registration');
+
+      expect(mockUserModel.findOne).not.toHaveBeenCalled();
+      expect(mockUserModel.create).not.toHaveBeenCalled();
     });
   });
 

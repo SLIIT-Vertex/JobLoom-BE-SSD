@@ -2,6 +2,7 @@ import User from './user.model.js';
 import * as smsService from '../../services/sms.service.js';
 import crypto from 'crypto';
 import { generateToken as jwtGenerateToken } from '../../utils/jwt.utils.js';
+import { PUBLIC_REGISTRATION_ROLES } from './user.constants.js';
 
 const generateToken = (user) => {
   return jwtGenerateToken({
@@ -12,7 +13,11 @@ const generateToken = (user) => {
 };
 
 export const registerUser = async (userData) => {
-  const { email, phone } = userData;
+  const { firstName, lastName, email, password, phone, role, location, companyName } = userData;
+
+  if (!PUBLIC_REGISTRATION_ROLES.includes(role)) {
+    throw new Error('Invalid role for public registration');
+  }
 
   const userExists = await User.findOne({ email });
 
@@ -25,10 +30,18 @@ export const registerUser = async (userData) => {
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   const user = await User.create({
-    ...userData,
+    firstName,
+    lastName,
+    email,
+    password,
+    phone,
+    role,
+    location,
+    companyName,
     verificationOtp: otp,
     verificationOtpExpires: otpExpires,
     isVerified: false,
+    isActive: true,
   });
 
   if (user) {
