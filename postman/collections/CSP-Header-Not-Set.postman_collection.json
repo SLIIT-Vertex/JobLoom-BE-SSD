@@ -1,0 +1,263 @@
+{
+  "info": {
+    "_postman_id": "7341e885-c67b-4c47-a646-08541d8ab67b",
+    "name": "JobLoom — Missing CSP Header Evidence (Automated)",
+    "description": "Automated, read-only reproduction of postman/guides/Vulnerability/CSP-HEADER-NOT-SET-EVIDENCE-GUIDE.md.\n\n## Run\n1. Keep the existing frontend running at http://localhost:5173.\n2. Import this file into Postman Desktop (or use a Desktop Agent that can reach localhost).\n3. Choose Run collection, select all three requests in their saved order, use one iteration, and Run. No environment, login, tokens, test data, or pasted scripts are required.\n4. View the final request's Test Results. For a report, open its response Visualize tab when available. The collection variable csp_evidence_json contains the full timestamped evidence; csp_verdict contains the conclusion. Individual Send requests do not share run-local comparison state; use the Collection Runner for the complete proof.\n\nThe collection automatically sends GET /, /robots.txt, /sitemap.xml; checks HTTP 200, HTML content type, JobLoom identity, absence of enforcing and report-only CSP headers, and absence of HTML CSP meta tags using an HTML parser. It compares each fallback body with the current run's root. Redirect following and the cookie jar are disabled for these requests. State resets at request 01 each iteration; failed requests cannot reuse a previous root.\n\nIMPORTANT: passing assertions mean the missing-header finding was reproduced, not that the application is secure. Meta policy, report-only policy, and identical fallback content are separate baseline checks. If CSP is present, an error page is returned, or the responses differ, the relevant assertions fail; inspect the evidence. An empty CSP header counts as present. Missing CSP alone does not establish XSS. This collection does not modify application data or configuration.\n\n## Evidence and screenshots\nCapture the Runner's results for all requests plus each response's URL, status, and complete Headers list. The final Visualize report summarizes the three URLs and displays the captured evidence. Postman scripts collect evidence automatically; capturing GUI screenshots remains a manual step. Enable response retention in the Runner if needed. Copy csp_evidence_json or export run results before closing the run; collection-variable persistence depends on Runner settings.\n\n## Optional command line (Newman installed)\nFrom JobLoom-BE-SSD-main:\nnewman run postman/collections/CSP-Header-Not-Set.postman_collection.json --timeout-request 15000 --reporters cli,json --reporter-json-export /tmp/jobloom-csp-run.json\n\nThe JSON report contains responses and assertion results. A successful exit means the documented vulnerability evidence was reproduced. The frontend must already be running; the collection cannot start a local server. To test another authorized frontend, change the collection variable csp_frontend_url (omit the trailing slash).\n\n## Script reference\nUses Postman's built-in cheerio parser: https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-reference/pm-require/",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "csp_frontend_url",
+      "value": "http://localhost:5173",
+      "type": "string"
+    },
+    {
+      "key": "csp_verdict",
+      "value": "NOT RUN",
+      "type": "string"
+    },
+    {
+      "key": "csp_baseline_reproduced",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "csp_evidence_json",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Run-local state prevents an earlier run from supplying a stale root response.",
+          "if (pm.info.requestName.indexOf('01 ') === 0 || !pm.variables.get('_csp_run_started')) {",
+          "  pm.variables.set('_csp_run_started', new Date().toISOString());",
+          "  pm.variables.set('_csp_rows', '[]');",
+          "  pm.variables.unset('_csp_root_body');",
+          "  pm.collectionVariables.set('csp_evidence_json', '');",
+          "}",
+          "pm.collectionVariables.set('csp_verdict', 'INCOMPLETE: waiting for all three responses in this run.');",
+          "pm.collectionVariables.set('csp_baseline_reproduced', 'false');"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const htmlParser = require('cheerio');",
+          "const body = pm.response.text();",
+          "const $ = htmlParser.load(body);",
+          "const headers = pm.response.headers.toJSON().map(function (h) {",
+          "  return { key: h.key, value: h.value };",
+          "});",
+          "function headerValues(name) {",
+          "  return headers.filter(function (h) {",
+          "    return h.key.toLowerCase() === name.toLowerCase();",
+          "  }).map(function (h) { return h.value; });",
+          "}",
+          "const cspHeaders = headerValues('Content-Security-Policy');",
+          "const reportHeaders = headerValues('Content-Security-Policy-Report-Only');",
+          "const metaPolicies = [];",
+          "$('meta[http-equiv]').each(function (_, element) {",
+          "  if (String($(element).attr('http-equiv')).trim().toLowerCase() === 'content-security-policy') {",
+          "    metaPolicies.push($(element).attr('content') || '');",
+          "  }",
+          "});",
+          "const contentType = pm.response.headers.get('Content-Type') || '';",
+          "const isHtml = /^text\\/html\\b/i.test(contentType);",
+          "const isJobloom = $('title').text().trim() === 'JobLoom' && $('div#root').length === 1;",
+          "const validDocument = pm.response.code === 200 && isHtml && isJobloom;",
+          "const index = Number(pm.info.requestName.slice(0, 2));",
+          "const paths = ['/', '/robots.txt', '/sitemap.xml'];",
+          "const path = paths[index - 1];",
+          "if (index === 1 && validDocument) {",
+          "  pm.variables.set('_csp_root_body', body);",
+          "}",
+          "const rootBody = pm.variables.get('_csp_root_body');",
+          "const matchesRoot = typeof rootBody === 'string' && body === rootBody;",
+          "function requireDocument() {",
+          "  pm.expect(validDocument, 'Need a 200 JobLoom HTML response; errors and unrelated pages are not evidence').to.eql(true);",
+          "}",
+          "pm.test('Response status is 200 (not an error or redirect)', function () {",
+          "  pm.expect(pm.response.code).to.eql(200);",
+          "});",
+          "pm.test('Response Content-Type is text/html', function () {",
+          "  pm.expect(isHtml).to.eql(true);",
+          "});",
+          "pm.test('HTML identifies the JobLoom entry document', function () {",
+          "  pm.expect(isJobloom).to.eql(true);",
+          "});",
+          "pm.test('FINDING CONFIRMED: valid HTML has no enforcing CSP header', function () {",
+          "  requireDocument();",
+          "  pm.expect(cspHeaders, 'Any CSP header, including an empty one, changes the missing-header finding').to.have.lengthOf(0);",
+          "});",
+          "pm.test('Baseline reproduced: report-only CSP header is absent', function () {",
+          "  requireDocument();",
+          "  pm.expect(reportHeaders).to.have.lengthOf(0);",
+          "});",
+          "pm.test('Baseline reproduced: HTML contains no CSP meta policy', function () {",
+          "  requireDocument();",
+          "  pm.expect(metaPolicies).to.have.lengthOf(0);",
+          "});",
+          "if (index > 1) {",
+          "  pm.test('Fallback HTML exactly matches root from THIS run', function () {",
+          "    requireDocument();",
+          "    pm.expect(typeof rootBody, 'Run the whole collection starting with 01').to.eql('string');",
+          "    pm.expect(matchesRoot).to.eql(true);",
+          "  });",
+          "}",
+          "const row = {",
+          "  path: path,",
+          "  url: pm.variables.replaceIn(pm.request.url.toString()),",
+          "  checkedAt: new Date().toISOString(),",
+          "  status: pm.response.code,",
+          "  contentType: contentType,",
+          "  validJobloomHtml: validDocument,",
+          "  cspHeaders: cspHeaders,",
+          "  reportOnlyHeaders: reportHeaders,",
+          "  cspMetaPolicies: metaPolicies,",
+          "  matchesRoot: matchesRoot,",
+          "  missingHeaderConfirmed: validDocument && cspHeaders.length === 0,",
+          "  baselineReproduced: validDocument && cspHeaders.length === 0 &&",
+          "    reportHeaders.length === 0 && metaPolicies.length === 0 && matchesRoot,",
+          "  responseHeaders: headers,",
+          "  responseBody: body",
+          "};",
+          "let rows = JSON.parse(pm.variables.get('_csp_rows') || '[]');",
+          "rows = rows.filter(function (r) { return r.path !== path; });",
+          "rows.push(row);",
+          "pm.variables.set('_csp_rows', JSON.stringify(rows));",
+          "const complete = rows.length === 3 && paths.every(function (p, i) { return rows[i].path === p; });",
+          "const findingConfirmed = complete && rows.every(function (r) { return r.missingHeaderConfirmed; });",
+          "const baselineReproduced = complete && rows.every(function (r) { return r.baselineReproduced; });",
+          "const verdict = !complete ? 'INCOMPLETE: run all three requests in order.' :",
+          "  findingConfirmed ? 'CONFIRMED: missing CSP header on all 3 JobLoom HTML responses.' :",
+          "  'NOT CONFIRMED for all 3 URLs: inspect failed assertions and response evidence.';",
+          "const evidence = {",
+          "  finding: 'Content Security Policy (CSP) Header Not Set',",
+          "  zapAlertReference: '10038-1',",
+          "  startedAt: pm.variables.get('_csp_run_started'),",
+          "  completed: complete,",
+          "  verdict: verdict,",
+          "  baselineReproduced: baselineReproduced,",
+          "  interpretation: 'Passing evidence assertions confirm the weakness, not secure behavior. Missing CSP alone does not prove XSS. Meta policy and report-only checks are separate from header absence.',",
+          "  responses: rows",
+          "};",
+          "pm.collectionVariables.set('csp_verdict', verdict);",
+          "pm.collectionVariables.set('csp_baseline_reproduced', String(baselineReproduced));",
+          "pm.collectionVariables.set('csp_evidence_json', JSON.stringify(evidence, null, 2));",
+          "if (index === 3) {",
+          "  pm.test('FINAL: all three current-run HTML responses lack a CSP header', function () {",
+          "    pm.expect(complete, 'Run 01, 02, 03 together in order').to.eql(true);",
+          "    pm.expect(findingConfirmed).to.eql(true);",
+          "  });",
+          "  pm.test('FINAL: guide baseline reproduced, including meta checks and identical fallback HTML', function () {",
+          "    pm.expect(baselineReproduced).to.eql(true);",
+          "  });",
+          "}",
+          "console.log('[CSP evidence]', row.url, JSON.stringify(row, null, 2));",
+          "console.log('[CSP summary]', verdict, 'Guide baseline reproduced:', baselineReproduced);",
+          "pm.visualizer.set(",
+          "  '<style>body{font:15px system-ui;padding:20px;color:#172033}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd3de;padding:9px;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f7;padding:12px}</style>' +",
+          "  '<h2>CSP evidence report</h2><p><strong>{{verdict}}</strong></p>' +",
+          "  '<p>Guide baseline reproduced: {{baselineReproduced}}</p>' +",
+          "  '<p>Green assertions confirm missing protection. They do not establish XSS exploitability.</p>' +",
+          "  '<table><tr><th>URL</th><th>Status</th><th>Type</th><th>CSP headers</th><th>Report-only headers</th><th>CSP meta tags</th><th>Matches root</th></tr>' +",
+          "  '{{#each responses}}<tr><td>{{url}}</td><td>{{status}}</td><td>{{contentType}}</td><td>{{cspHeaders.length}}</td><td>{{reportOnlyHeaders.length}}</td><td>{{cspMetaPolicies.length}}</td><td>{{matchesRoot}}</td></tr>{{/each}}</table>' +",
+          "  '<h3>Captured evidence (current run)</h3><pre>{{json}}</pre>',",
+          "  { verdict: verdict, baselineReproduced: String(baselineReproduced), responses: rows, json: JSON.stringify(evidence, null, 2) }",
+          ");"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Frontend root",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/",
+        "description": "Captures the current-run root baseline and clears earlier evidence."
+      },
+      "response": []
+    },
+    {
+      "name": "02 Robots HTML fallback",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/robots.txt",
+        "description": "Checks missing CSP and compares the returned HTML with request 01."
+      },
+      "response": []
+    },
+    {
+      "name": "03 Sitemap HTML fallback and final report",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/sitemap.xml",
+        "description": "Checks missing CSP, compares HTML with request 01, and produces the combined verdict and evidence report."
+      },
+      "response": []
+    }
+  ]
+}

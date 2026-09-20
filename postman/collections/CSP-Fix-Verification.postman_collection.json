@@ -1,0 +1,190 @@
+{
+  "info": {
+    "_postman_id": "a711046b-61ef-4f6c-ac22-1d38f9944f13",
+    "name": "JobLoom — CSP Fix Verification (Automated)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "After-fix collection. Keep the original missing-header evidence collection unchanged.\n\nImport and Run all 3 requests in the saved order with one iteration. No login, environment or data setup is needed for localhost:5173. All 10 positive assertions should pass. The final response Visualization provides one screenshot showing all three resolved URLs, status 200, CSP verification, and the reviewed full policy. If the Runner does not show Visualization, inspect response Headers and Test Results or run 01-03 through the Runner with response retention enabled.\n\nDefault expected policy is independently generated from the shared frontend policy builder for development with API http://localhost:3000/api and Jitsi meet.jit.si. For preview/production or different configured origins, change csp_frontend_url and set csp_expected_policy from the independently reviewed builder output, not from the response under test. A nonempty report-only header is not sufficient.\n\nThe collection automatically saves csp_fix_verdict and csp_fix_evidence_json. Run-local state prevents stale previous-run results. Passing tests confirm header delivery/configuration, not XSS elimination or production deployment. Screenshot capture is manual.\n\nCLI: newman run postman/collections/CSP-Fix-Verification.postman_collection.json --timeout-request 15000 --reporters cli,json --reporter-json-export /tmp/jobloom-csp-fixed.json\n\nGuide: postman/guides/fix/CSP-HEADER-NOT-SET-VERIFICATION-RESULTS.md"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "csp_frontend_url",
+      "value": "http://localhost:5173",
+      "type": "string"
+    },
+    {
+      "key": "csp_expected_policy",
+      "value": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com https://meet.jit.si 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://assets.calendly.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: http://localhost:3000 https://res.cloudinary.com https://maps.googleapis.com https://maps.gstatic.com; connect-src 'self' http://localhost:3000 https://translate.googleapis.com https://maps.googleapis.com https://maps.gstatic.com ws://localhost:5173 ws://127.0.0.1:5173; frame-src https://meet.jit.si https://www.google.com https://maps.google.com; worker-src 'self' blob:; manifest-src 'self'; media-src 'self' blob:",
+      "type": "string"
+    },
+    {
+      "key": "csp_fix_verdict",
+      "value": "NOT RUN",
+      "type": "string"
+    },
+    {
+      "key": "csp_fix_evidence_json",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (pm.info.requestName.startsWith('01 ') || !pm.variables.get('_csp_fix_started')) {",
+          "  pm.variables.set('_csp_fix_started', new Date().toISOString());",
+          "  pm.variables.set('_csp_fix_rows', '[]');",
+          "  pm.collectionVariables.set('csp_fix_evidence_json', '');",
+          "}",
+          "pm.collectionVariables.set('csp_fix_verdict', 'INCOMPLETE: waiting for all three responses.');"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const htmlParser = require('cheerio');",
+          "const body = pm.response.text();",
+          "const $ = htmlParser.load(body);",
+          "const headers = pm.response.headers.toJSON().map(h => ({ key: h.key, value: h.value }));",
+          "const policies = headers.filter(h => h.key.toLowerCase() === 'content-security-policy').map(h => h.value.trim());",
+          "const expected = String(pm.collectionVariables.get('csp_expected_policy') || '').trim();",
+          "const policy = policies[0] || '';",
+          "const validHtml = pm.response.code === 200 && /^text\\/html\\b/i.test(pm.response.headers.get('Content-Type') || '') && $('title').text().trim() === 'JobLoom' && $('div#root').length === 1;",
+          "pm.test('FIX VERIFIED: successful JobLoom HTML response', function () {",
+          "  pm.expect(validHtml, 'Must be 200 HTML from JobLoom, not an error or unrelated page').to.eql(true);",
+          "});",
+          "pm.test('FIX VERIFIED: exactly one nonempty enforcing CSP header', function () {",
+          "  pm.expect(policies).to.have.lengthOf(1);",
+          "  pm.expect(policy).not.to.eql('');",
+          "});",
+          "pm.test('FIX VERIFIED: CSP matches the independently reviewed policy', function () {",
+          "  pm.expect(expected, 'Set csp_expected_policy for the environment being tested').not.to.eql('');",
+          "  pm.expect(policy).to.eql(expected);",
+          "});",
+          "const row = {",
+          "  request: pm.info.requestName,",
+          "  url: pm.variables.replaceIn(pm.request.url.toString()),",
+          "  checkedAt: new Date().toISOString(),",
+          "  status: pm.response.code,",
+          "  contentType: pm.response.headers.get('Content-Type'),",
+          "  policy: policy,",
+          "  verified: validHtml && policies.length === 1 && expected.length > 0 && policy === expected,",
+          "  headers: headers",
+          "};",
+          "let rows = JSON.parse(pm.variables.get('_csp_fix_rows') || '[]');",
+          "rows = rows.filter(r => r.request !== row.request);",
+          "rows.push(row);",
+          "pm.variables.set('_csp_fix_rows', JSON.stringify(rows));",
+          "const complete = rows.length === 3 && rows.every((r, i) => r.request.startsWith('0' + (i + 1) + ' '));",
+          "const verified = complete && rows.every(r => r.verified);",
+          "const verdict = verified ? 'FIX VERIFIED — all 3 original URLs deliver the reviewed enforcing CSP' : complete ? 'NOT VERIFIED — inspect failed checks' : 'INCOMPLETE — run all 3 requests in order';",
+          "const report = { verdict, startedAt: pm.variables.get('_csp_fix_started'), responses: rows };",
+          "pm.collectionVariables.set('csp_fix_verdict', verdict);",
+          "pm.collectionVariables.set('csp_fix_evidence_json', JSON.stringify(report, null, 2));",
+          "if (pm.info.requestName.startsWith('03 ')) {",
+          "  pm.test('FINAL: missing CSP header fixed on all three original URLs', function () {",
+          "    pm.expect(verified, 'All three current-run responses must pass the positive checks').to.eql(true);",
+          "  });",
+          "}",
+          "console.log('[CSP after-fix]', JSON.stringify(report, null, 2));",
+          "pm.visualizer.set(",
+          "  '<style>body{font:16px system-ui;color:#172033;padding:24px}h1{font-size:23px}table{border-collapse:collapse;width:100%}td,th{padding:10px;border:1px solid #bbc6d2;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f5f9;padding:14px}.ok{color:#087f4d}.bad{color:#b42318}</style>' +",
+          "  '<h1 class=\"{{#if verified}}ok{{else}}bad{{/if}}\">{{verdict}}</h1>' +",
+          "  '<p>Finding: Content Security Policy (CSP) Header Not Set · ZAP 10038-1</p><p>Run started: {{startedAt}}</p>' +",
+          "  '<table><tr><th>Original URL</th><th>Status</th><th>Content type</th><th>Enforcing CSP / reviewed policy</th></tr>' +",
+          "  '{{#each responses}}<tr><td>{{url}}</td><td>{{status}}</td><td>{{contentType}}</td><td class=\"{{#if verified}}ok{{else}}bad{{/if}}\">{{#if verified}}VERIFIED{{else}}FAILED{{/if}}</td></tr>{{/each}}</table>' +",
+          "  '<h3>Reviewed Content-Security-Policy</h3><pre>{{expected}}</pre>' +",
+          "  '<p>This verifies header delivery and configuration. Development allows inline refresh scripts; browser enforcement is tested separately on the production policy.</p>' +",
+          "  '<details><summary>Captured response evidence</summary><pre>{{json}}</pre></details>',",
+          "  { ...report, verified, expected, json: JSON.stringify(report, null, 2) }",
+          ");"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Frontend root",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/"
+      },
+      "response": []
+    },
+    {
+      "name": "02 Robots HTML fallback",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/robots.txt"
+      },
+      "response": []
+    },
+    {
+      "name": "03 Sitemap and final fix report",
+      "protocolProfileBehavior": {
+        "followRedirects": false,
+        "disableCookies": true
+      },
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "text/html"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{csp_frontend_url}}/sitemap.xml"
+      },
+      "response": []
+    }
+  ]
+}
