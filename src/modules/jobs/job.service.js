@@ -4,6 +4,7 @@ import axios from 'axios';
 import { BadRequestException, NotFoundException } from '../../models/http-exception.js';
 import logger from '../../config/logger.config.js';
 import envConfig from '../../config/env.config.js';
+import { sanitizeJobDescription } from './job-description-sanitize.js';
 
 const JOB_UPDATE_FIELDS = [
   'title',
@@ -275,6 +276,10 @@ export const createJob = async (jobData, employerId) => {
         ? jobData.skillsRequired.length
         : 'N/A',
     });
+
+    if (typeof jobData.description === 'string') {
+      jobData.description = sanitizeJobDescription(jobData.description);
+    }
 
     // Add employer ID to job data
     const job = new Job({
@@ -636,6 +641,10 @@ export const updateJob = async (jobId, employerId, updateData) => {
     // Business rule: Cannot update if job is not active
     if (!job.isActive) {
       throw new BadRequestException('Cannot update inactive job');
+    }
+
+    if (typeof updateData.description === 'string') {
+      updateData.description = sanitizeJobDescription(updateData.description);
     }
 
     // Assign only fields supported by the employer update API. Ownership,

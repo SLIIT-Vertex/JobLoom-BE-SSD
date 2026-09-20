@@ -151,6 +151,22 @@ describe('Job Routes — Integration Tests', () => {
       expect(res.status).toBe(403);
     });
 
+    test('should strip script tags from description on create', async () => {
+      const res = await request(app)
+        .post('/api/jobs')
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({
+          ...validJobData,
+          description:
+            '<p>Safe padding text here for create.</p><script>alert("M3-STORED-XSS-PROOF")</script>',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.description).not.toMatch(/<script/i);
+      expect(res.body.data.description).not.toContain('M3-STORED-XSS-PROOF');
+      expect(res.body.data.description).toContain('Safe padding text here for create');
+    });
+
     test('should accept a job with valid GPS coordinates', async () => {
       const jobWithCoords = {
         ...validJobData,
@@ -559,6 +575,55 @@ describe('Job Routes — Integration Tests', () => {
         .send({ title: 'Ghost Title' });
 
       expect(res.status).toBe(404);
+    });
+
+    test('should strip script tags from description on update', async () => {
+      const res = await request(app)
+        .put(`/api/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({
+          description:
+            '<p>Safe padding text here.</p><script>alert("M3-STORED-XSS-PROOF")</script>',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.description).not.toMatch(/<script/i);
+      expect(res.body.data.description).not.toContain('M3-STORED-XSS-PROOF');
+      expect(res.body.data.description).toContain('Safe padding text here');
+
+      const publicGet = await request(app).get(`/api/jobs/${jobId}`);
+      expect(publicGet.status).toBe(200);
+      expect(publicGet.body.data.description).not.toMatch(/<script/i);
+      expect(publicGet.body.data.description).toContain('Safe padding text here');
+    });
+
+    test('should strip img tags and event handlers from description', async () => {
+      const res = await request(app)
+        .put(`/api/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({
+          description:
+            '<p>Need help with harvesting crops in the field.</p><img src=x onerror="alert(1)">',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.description).not.toMatch(/<img/i);
+      expect(res.body.data.description).not.toMatch(/onerror/i);
+      expect(res.body.data.description).toContain('Need help with harvesting crops');
+    });
+
+    test('should keep allow-listed HTML in description', async () => {
+      const res = await request(app)
+        .put(`/api/jobs/${jobId}`)
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({
+          description: '<p><strong>Need help with harvesting crops in the field.</strong></p>',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.description).toContain('<p>');
+      expect(res.body.data.description).toContain('<strong>');
+      expect(res.body.data.description).toContain('Need help with harvesting crops in the field.');
     });
   });
 

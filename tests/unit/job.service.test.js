@@ -157,6 +157,22 @@ describe('Job Service — Unit Tests', () => {
       expect(result.employerId).toBe(employerId.toString());
     });
 
+    test('should sanitize script tags out of description on create', async () => {
+      const result = await createJob(
+        {
+          title: 'Farm Helper',
+          description:
+            '<p>Safe padding text here for create.</p><script>alert("M3-STORED-XSS-PROOF")</script>',
+          category: 'agriculture',
+        },
+        employerId.toString()
+      );
+
+      expect(result.description).not.toMatch(/<script/i);
+      expect(result.description).not.toContain('M3-STORED-XSS-PROOF');
+      expect(result.description).toContain('Safe padding text here for create');
+    });
+
     test('should strip invalid coordinates (empty array) before saving', async () => {
       const jobDataWithBadCoords = {
         title: 'Construction Worker',
@@ -574,6 +590,20 @@ describe('Job Service — Unit Tests', () => {
       expect(job.save).toHaveBeenCalled();
       expect(result.title).toBe('Updated Farm Helper Role');
       expect(result.salaryAmount).toBe(2000);
+    });
+
+    test('should sanitize script tags out of description on update', async () => {
+      const job = makeJob();
+      mockJobModel.findById.mockResolvedValue(job);
+
+      await updateJob(jobId.toString(), employerId.toString(), {
+        description: '<p>Safe padding text here.</p><script>alert("M3-STORED-XSS-PROOF")</script>',
+      });
+
+      expect(job.description).not.toMatch(/<script/i);
+      expect(job.description).not.toContain('M3-STORED-XSS-PROOF');
+      expect(job.description).toContain('Safe padding text here');
+      expect(job.save).toHaveBeenCalled();
     });
 
     test('should ignore protected fields when called without route validation', async () => {

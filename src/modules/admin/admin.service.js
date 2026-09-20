@@ -1,6 +1,7 @@
 import User from '../users/user.model.js';
 import Job from '../jobs/job.model.js';
 import Application from '../applications/application.model.js';
+import { sanitizeJobDescription } from '../jobs/job-description-sanitize.js';
 
 /**
  * Get dashboard statistics for admin
@@ -150,7 +151,12 @@ export const getAllJobs = async (query = {}) => {
  * @param {Object} updateData
  */
 export const updateJobByAdmin = async (jobId, updateData) => {
-  const job = await Job.findByIdAndUpdate(jobId, updateData, { new: true }).populate(
+  const sanitizedUpdate = { ...updateData };
+  if (typeof sanitizedUpdate.description === 'string') {
+    sanitizedUpdate.description = sanitizeJobDescription(sanitizedUpdate.description);
+  }
+
+  const job = await Job.findByIdAndUpdate(jobId, sanitizedUpdate, { new: true }).populate(
     'employerId',
     'firstName lastName email companyName'
   );
