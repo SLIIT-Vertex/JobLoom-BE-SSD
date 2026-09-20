@@ -1,0 +1,499 @@
+{
+  "info": {
+    "_postman_id": "f1a2b3c4-unauth-upload-test-0001",
+    "name": "JobLoom — Unauthenticated File Upload Test",
+    "description": "Tests ONE thing: can `POST /api/upload` store a file without any authentication?\n\nThe verdict is decided by the real server response, not by assumptions.\n\n## Verified against current source\n| Item | Confirmed value | Source |\n| --- | --- | --- |\n| Endpoint | `POST /api/upload` | `src/server.js:68` mounts `uploadRoute` at `/api/upload`; `src/routes/upload.route.js:111` defines `router.post('/')` |\n| Auth on POST | **none** — no `protect`, no role middleware | `src/routes/upload.route.js:111` |\n| Auth on sibling GET | `protect` IS applied | `src/routes/upload.route.js:64` (`GET /signed-url`) |\n| File field name | `file` (required) | `cloudUpload.single('file')` |\n| `folder` field | optional text field; defaults to `jobloom_uploads` | `upload.route.js:116` → `upload.service.js:24` |\n| Allowed types | ext `.jpg .jpeg .png .pdf .doc .docx` AND matching MIME | `checkFileType`, `upload.route.js:12-27` |\n| Max size | 15 MB | `limits: { fileSize: 15 * 1024 * 1024 }` |\n| Storage | Cloudinary (memory buffer → `upload_stream`) | `upload.service.js:23-46` |\n| Success response | `{ url, public_id, resource_type }` | `upload.service.js:42-46` |\n| Backend port | `3000` | `.env` → `PORT=3000` |\n| Frontend sends token? | **No** — `uploadFile()` sends no `Authorization` header | `JobLoom-App-SSD-main/src/services/uploadApi.js:22-26` |\n\n## Prerequisites\n1. Backend running: `cd JobLoom-BE-SSD-main && npm run dev`\n2. Seed account exists: `npm run seed:basic`\n3. **One manual step:** in request `03` and `02`, the `file` form field must point at `postman/test-files/upload-test.png`. See the guide — set Postman's working directory to that folder, or click **Select File** once per request.\n\n## Run order\n`00` → `01` → `02` → `03` → `04` → `05`\n\n## How to read the result\n| Request 03 outcome | Meaning |\n| --- | --- |\n| Test **fails** with 200 + file URL | `VULNERABLE: File upload succeeded without authentication.` |\n| Test **passes** with 401/403 | `PROTECTED: Authentication was required.` |\n| `INCONCLUSIVE` in console | Usually the test file was not selected — fix and re-run |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "employerEmail",
+      "value": "seed.employer.basic@jobloom.test",
+      "type": "string"
+    },
+    {
+      "key": "employerPassword",
+      "value": "Test@1234",
+      "type": "string"
+    },
+    {
+      "key": "uploadFolder",
+      "value": "jobloom_upload_auth_test",
+      "type": "string"
+    },
+    {
+      "key": "testFileName",
+      "value": "upload-test.png",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "baselineFileUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "baselinePublicId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "uploadedFileUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "uploadedPublicId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "verdict",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Backend Reachable (sanity check)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Backend is reachable', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+              "});",
+              "",
+              "console.log('[00] Backend responded with', pm.response.code);",
+              "console.log('[00] If this request errors, start the backend: cd JobLoom-BE-SSD-main && npm run dev');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "## Purpose\nConfirms the API is up before testing. `/health` is mounted at the root, not under `/api` (`src/server.js:66`).\n\n## Expected\nHTTP **200** (or 503 if MongoDB is down — still fine for this test).\n\n## Not a security test\nThis request exists only to avoid confusing a stopped server with a secure endpoint."
+      },
+      "response": []
+    },
+    {
+      "name": "01 Login as Employer (auto-saves authToken)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "",
+              "pm.test('Login returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Login response contains a token', function () {",
+              "  pm.expect(json.token, 'token').to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "if (json.token) {",
+              "  pm.collectionVariables.set('authToken', json.token);",
+              "  console.log('[01] authToken saved automatically (length ' + String(json.token).length + ').');",
+              "} else {",
+              "  console.warn('[01] No token found. Run: cd JobLoom-BE-SSD-main && npm run seed:basic');",
+              "}",
+              "",
+              "pm.test('Logged-in account has employer role', function () {",
+              "  pm.expect(json.role).to.eql('employer');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{employerEmail}}\",\n  \"password\": \"{{employerPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/users/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "users", "login"]
+        },
+        "description": "## Purpose\nObtains a real JWT so request `02` can prove the upload feature works normally when authenticated.\n\n## Account used\nFrom `scripts/seed-basic-users-job.js:121-132` (seeded with `isVerified: true`):\n- email: `seed.employer.basic@jobloom.test`\n- password: `Test@1234`\n\nCreate it with: `npm run seed:basic`\n\n## Response shape\n`src/modules/users/user.service.js:174-181` returns a flat object:\n```json\n{ \"_id\": \"...\", \"firstName\": \"...\", \"email\": \"...\", \"role\": \"employer\", \"token\": \"<JWT>\" }\n```\n\n## Automated\nSaves `token` → collection variable `authToken`. **You never copy a token manually.**"
+      },
+      "response": []
+    },
+    {
+      "name": "02 Authenticated Upload — baseline (WITH token)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('authToken')) {",
+              "  console.warn('[02] authToken is empty — run request 01 first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "",
+              "const code = pm.response.code;",
+              "",
+              "if (code === 400 && /no file uploaded/i.test(pm.response.text())) {",
+              "  console.warn('[02] SETUP PROBLEM: no file was attached.');",
+              "  console.warn('[02] Open the Body tab, form-data row \"file\", and select postman/test-files/upload-test.png');",
+              "}",
+              "",
+              "pm.test('Baseline upload succeeds with a valid token (200)', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response contains url, public_id and resource_type', function () {",
+              "  pm.expect(json).to.have.property('url');",
+              "  pm.expect(json).to.have.property('public_id');",
+              "  pm.expect(json).to.have.property('resource_type');",
+              "});",
+              "",
+              "pm.test('Returned url is a usable http(s) link', function () {",
+              "  pm.expect(String(json.url || '')).to.match(/^https?:\\/\\//);",
+              "});",
+              "",
+              "if (json.url) {",
+              "  pm.collectionVariables.set('baselineFileUrl', json.url);",
+              "}",
+              "if (json.public_id) {",
+              "  pm.collectionVariables.set('baselinePublicId', json.public_id);",
+              "}",
+              "",
+              "console.log('[02] BASELINE (authenticated) status =', code);",
+              "console.log('[02] baselineFileUrl  =', pm.collectionVariables.get('baselineFileUrl'));",
+              "console.log('[02] baselinePublicId =', pm.collectionVariables.get('baselinePublicId'));",
+              "console.log('[02] This proves the upload feature works normally. Request 03 removes the token.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{authToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "upload-test.png",
+              "description": "Harmless 32x32 PNG from postman/test-files/upload-test.png. Field name must be exactly 'file' (cloudUpload.single('file'))."
+            },
+            {
+              "key": "folder",
+              "value": "{{uploadFolder}}",
+              "type": "text",
+              "description": "Optional. Cloudinary folder. Omitting it defaults to 'jobloom_uploads'."
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/upload",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "upload"]
+        },
+        "description": "## Purpose — CONTROL, not the attack\nEstablishes that the upload endpoint works normally for an authenticated employer. Without this baseline, a failure in request `03` could be blamed on a broken endpoint.\n\n## Request\n- Method: **POST**\n- URL: `{{baseUrl}}/api/upload`\n- Body: **multipart/form-data**\n  - `file` → `upload-test.png` (file)\n  - `folder` → `{{uploadFolder}}` (text, optional)\n- Auth: **Bearer `{{authToken}}`** (from request 01)\n\n## Expected\n| Check | Value |\n| --- | --- |\n| HTTP | **200** |\n| Body | `{ \"url\": \"https://res.cloudinary.com/...\", \"public_id\": \"...\", \"resource_type\": \"image\" }` |\n\n## Automated\nSaves `url` → `baselineFileUrl`, `public_id` → `baselinePublicId`.\n\n## If you get 400 \"No file uploaded\"\nThe file row is not attached. Select `postman/test-files/upload-test.png` in the Body tab (see the guide)."
+      },
+      "response": []
+    },
+    {
+      "name": "03 UNAUTHENTICATED Upload — VULNERABILITY TEST (No Auth)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Make absolutely sure nothing in this collection adds credentials.",
+              "pm.collectionVariables.set('verdict', '');",
+              "console.log('[03] Sending upload with NO Authorization header, NO token, NO auth cookie.');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const code = pm.response.code;",
+              "const raw = pm.response.text();",
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "",
+              "// --- Prove no credentials were sent -------------------------------",
+              "const sentAuthHeader = pm.request.headers.find(function (h) {",
+              "  return String(h.key).toLowerCase() === 'authorization';",
+              "});",
+              "",
+              "pm.test('Request carried NO Authorization header', function () {",
+              "  pm.expect(sentAuthHeader, 'authorization header').to.be.undefined;",
+              "});",
+              "",
+              "// --- Decide the verdict from the ACTUAL response ------------------",
+              "const uploadedOk =",
+              "  code >= 200 && code < 300 &&",
+              "  typeof json.url === 'string' && /^https?:\\/\\//.test(json.url);",
+              "",
+              "let verdict;",
+              "if (code === 401 || code === 403) {",
+              "  verdict = 'PROTECTED';",
+              "} else if (uploadedOk) {",
+              "  verdict = 'VULNERABLE';",
+              "} else {",
+              "  verdict = 'INCONCLUSIVE';",
+              "}",
+              "pm.collectionVariables.set('verdict', verdict);",
+              "",
+              "// --- Report -------------------------------------------------------",
+              "if (json.url) {",
+              "  pm.collectionVariables.set('uploadedFileUrl', json.url);",
+              "}",
+              "if (json.public_id) {",
+              "  pm.collectionVariables.set('uploadedPublicId', json.public_id);",
+              "}",
+              "",
+              "if (verdict === 'VULNERABLE') {",
+              "  console.error('VULNERABLE: File upload succeeded without authentication.');",
+              "  console.log('[03] status =', code);",
+              "  console.log('[03] url       =', json.url);",
+              "  console.log('[03] public_id =', json.public_id);",
+              "  console.log('[03] Saved uploadedFileUrl for request 04. Open 04 and Send -- the URL bar fills from this value.');",
+              "} else if (verdict === 'PROTECTED') {",
+              "  console.log('PROTECTED: Authentication was required.');",
+              "  console.log('[03] status =', code, '| body =', raw);",
+              "} else {",
+              "  console.warn('INCONCLUSIVE: status ' + code + ' — this is neither a successful upload nor an auth rejection.');",
+              "  console.warn('[03] body =', raw);",
+              "  if (code === 400 && /no file uploaded/i.test(raw)) {",
+              "    console.warn('[03] CAUSE: no file attached. Select postman/test-files/upload-test.png in the Body tab, then re-run.');",
+              "  } else if (code === 502 || code === 504) {",
+              "    console.warn('[03] CAUSE: backend reached Cloudinary but the provider call failed (check CLOUDINARY_* in .env).');",
+              "    console.warn('[03] NOTE: a 502/504 still means the request passed authentication — it was NOT rejected as unauthorized.');",
+              "  }",
+              "}",
+              "",
+              "// Visible verdict row in the Test Results tab (never fails).",
+              "pm.test('CONCLUSION → ' + verdict, function () {",
+              "  pm.expect(verdict).to.be.oneOf(['VULNERABLE', 'PROTECTED', 'INCONCLUSIVE']);",
+              "});",
+              "",
+              "// The security expectation. FAILS when the app is vulnerable.",
+              "pm.test('Endpoint should reject unauthenticated upload with 401/403', function () {",
+              "  pm.expect(",
+              "    [401, 403],",
+              "    'actual status ' + code + ' (verdict: ' + verdict + ')'",
+              "  ).to.include(code);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "upload-test.png",
+              "description": "Same harmless 32x32 PNG used in request 02."
+            },
+            {
+              "key": "folder",
+              "value": "{{uploadFolder}}",
+              "type": "text",
+              "description": "Optional folder, same value as the baseline request."
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/upload",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "upload"]
+        },
+        "description": "## THIS IS THE VULNERABILITY TEST\nByte-for-byte the same request as `02`, with **all credentials removed**.\n\n| Aspect | Value |\n| --- | --- |\n| Method / URL | `POST {{baseUrl}}/api/upload` |\n| Authorization tab | **No Auth** (explicitly set — nothing inherited) |\n| Bearer token | none |\n| Saved login token | not referenced anywhere in this request |\n| Auth cookie | none added by this collection |\n| Body | same `file` + `folder` multipart fields |\n\nThe collection root is also set to **No Auth**, so there is nothing to inherit.\n\n## Verdict logic (decided at runtime, never hard-coded)\n| Actual response | Verdict printed |\n| --- | --- |\n| 2xx **and** body has a valid `url` | `VULNERABLE: File upload succeeded without authentication.` |\n| **401 or 403** | `PROTECTED: Authentication was required.` |\n| anything else (e.g. 400 no file, 502 provider error) | `INCONCLUSIVE` + the likely cause |\n\n## Test results you will see\n- `CONCLUSION → VULNERABLE` / `PROTECTED` / `INCONCLUSIVE` — informational, always passes\n- `Endpoint should reject unauthenticated upload with 401/403` — **fails if vulnerable**, passes if protected\n\n## Automated\nOn a successful unauthenticated upload: saves `url` → `uploadedFileUrl`, `public_id` → `uploadedPublicId` for request `04`.\n\n## Note on 502\nA 502 means the request got past the route into the Cloudinary call — i.e. it was **not** rejected for missing authentication. Fix `CLOUDINARY_*` in `.env` and re-run for clean evidence."
+      },
+      "response": []
+    },
+    {
+      "name": "04 Verify Uploaded File Is Retrievable",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let url = (pm.collectionVariables.get('uploadedFileUrl') || '').trim();",
+              "let source = 'request 03 (unauthenticated upload)';",
+              "",
+              "if (!url) {",
+              "  url = (pm.collectionVariables.get('baselineFileUrl') || '').trim();",
+              "  source = 'request 02 (authenticated baseline) — run 03 first for the unauthenticated URL';",
+              "}",
+              "",
+              "if (!url) {",
+              "  console.error('[04] No file URL is saved yet.');",
+              "  console.error('[04] Send request 03 (or at least 02) first, then Send 04 again.');",
+              "  console.error('[04] Check the collection Variables tab: uploadedFileUrl / baselineFileUrl must be an https URL.');",
+              "  throw new Error('No file URL yet. Run request 03 first, then send 04 again.');",
+              "}",
+              "",
+              "pm.request.url.update(url);",
+              "console.log('[04] GET', url);",
+              "console.log('[04] URL source:', source);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const code = pm.response.code;",
+              "const type = pm.response.headers.get('content-type') || '';",
+              "const usedUrl = String(pm.request.url);",
+              "",
+              "pm.test('Request URL is a real http(s) file link (not empty)', function () {",
+              "  pm.expect(usedUrl).to.match(/^https?:\\/\\//);",
+              "});",
+              "",
+              "pm.test('CONCLUSION → stored file retrieval status: ' + code, function () {",
+              "  pm.expect(code).to.be.a('number');",
+              "});",
+              "",
+              "if (code === 200) {",
+              "  console.log('[04] FILE IS PUBLICLY RETRIEVABLE — content-type:', type, '| bytes:', pm.response.responseSize);",
+              "  pm.test('Retrieved content is an image', function () {",
+              "    pm.expect(type).to.include('image');",
+              "  });",
+              "  pm.test('Chain proven: upload accepted -> file stored -> file retrievable', function () {",
+              "    pm.expect(code).to.eql(200);",
+              "  });",
+              "} else if ([401, 403].indexOf(code) !== -1) {",
+              "  console.log('[04] File WAS stored, but the storage provider restricts direct delivery (status ' + code + ').');",
+              "  console.log('[04] Persistence is still proven by the public_id from request 03:', pm.collectionVariables.get('uploadedPublicId'));",
+              "  console.log('[04] No bypass attempted — this is expected when Cloudinary Asset Access Control is enabled.');",
+              "} else {",
+              "  console.warn('[04] Unexpected status ' + code + ' when retrieving the stored file.');",
+              "  console.warn('[04] URL used:', usedUrl);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": "{{uploadedFileUrl}}",
+        "description": "## Purpose\nProves the upload was actually **persisted**, completing the chain:\n\n`Upload accepted` → `File stored` → `Returned file accessible`\n\n## Why the URL bar looks empty before you run 03\nThis request's address is `{{uploadedFileUrl}}`. That variable starts blank on purpose. Request `03` fills it. The pre-request script then writes the real Cloudinary URL onto this GET.\n\n**Do this:** send `03` first (must return a `url`), then send `04`. Do not skip 03.\n\nIf `03` did not save a URL, `04` falls back to `{{baselineFileUrl}}` from request `02` so the request is not empty.\n\n## Outcomes\n| Status | Meaning |\n| --- | --- |\n| **200** + image content-type | File is stored **and** publicly retrievable — strongest evidence |\n| **401 / 403** | File was stored, but the provider restricts direct delivery. Persistence is still proven by the `public_id` from request 03. |\n| Pre-request error \"No file URL yet\" | You opened 04 before 02/03 saved a URL. Run 03, then 04. |\n\n## Scope\nRead-only GET of your own harmless test image. **No attempt is made to bypass any storage-provider access control.**"
+      },
+      "response": []
+    },
+    {
+      "name": "05 Control — Sibling Route Without Token (expect 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const code = pm.response.code;",
+              "",
+              "pm.test('Sibling upload route rejects missing token (401)', function () {",
+              "  pm.expect(code).to.eql(401);",
+              "});",
+              "",
+              "console.log('[05] GET /api/upload/signed-url without a token =>', code, pm.response.text());",
+              "console.log('[05] Same router file, same module: the GET route uses protect (line 64), the POST route does not (line 111).');",
+              "console.log('[05] So a 401 here + a 200 in request 03 shows the omission is specific to POST, not a server-wide lack of auth.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/upload/signed-url",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "upload", "signed-url"]
+        },
+        "description": "## Purpose — corroborating control\nThe **same router file** (`src/routes/upload.route.js`) protects its GET route but not its POST route:\n- line 64: `router.get('/signed-url', protect, ...)` ✅ protected\n- line 111: `router.post('/', cloudUpload.single('file'), ...)` ❌ no auth\n\n## Expected\nHTTP **401** `{\"message\":\"Not authorized, no token\"}`\n\n## Why it strengthens the finding\nA 401 here proves authentication middleware is present and working in this module. Combined with a 200 from request `03`, it shows the POST endpoint's missing `protect` is a specific defect — not a misconfigured server or a disabled auth system.\n\n## Not an attack\nThis is a plain unauthenticated GET expected to be refused. No bypass is attempted."
+      },
+      "response": []
+    }
+  ]
+}
