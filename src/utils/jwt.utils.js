@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 import HttpException from '../models/http-exception.js';
+import envConfig from '../config/env.config.js';
 
 /**
  * JWT Utility Functions
@@ -16,11 +17,8 @@ import HttpException from '../models/http-exception.js';
  * @returns {string} JWT token
  */
 export const generateToken = (payload) => {
-  const jwtSecret = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
-
-  return jwt.sign(payload, jwtSecret, {
-    expiresIn,
+  return jwt.sign(payload, envConfig.jwtSecret, {
+    expiresIn: envConfig.jwtExpiresIn,
     jwtid: randomUUID(),
     issuer: 'jobloom-api',
     audience: 'jobloom-client',
@@ -34,10 +32,8 @@ export const generateToken = (payload) => {
  * @throws {Error} If token is invalid or expired
  */
 export const verifyToken = (token) => {
-  const jwtSecret = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
-
   try {
-    const decoded = jwt.verify(token, jwtSecret, {
+    const decoded = jwt.verify(token, envConfig.jwtSecret, {
       issuer: 'jobloom-api',
       audience: 'jobloom-client',
     });
