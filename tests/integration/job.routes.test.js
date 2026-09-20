@@ -136,6 +136,25 @@ describe('Job Routes — Integration Tests', () => {
       expect(res.body.data.employerId).toBe(employerId);
     });
 
+    test('should reject protected fields during job creation', async () => {
+      const protectedTitle = 'Protected Creation Attempt';
+      const res = await request(app)
+        .post('/api/jobs')
+        .set('Authorization', `Bearer ${employerToken}`)
+        .send({
+          ...validJobData,
+          title: protectedTitle,
+          employerId: otherEmployerId,
+          status: 'filled',
+          isActive: false,
+          applicantsCount: 99,
+          createdAt: new Date(0).toISOString(),
+        });
+
+      expect(res.status).toBe(400);
+      expect(await Job.findOne({ title: protectedTitle })).toBeNull();
+    });
+
     test('should return 401 when no auth token is provided', async () => {
       const res = await request(app).post('/api/jobs').send(validJobData);
 
@@ -532,13 +551,14 @@ describe('Job Routes — Integration Tests', () => {
       const res = await request(app)
         .put(`/api/jobs/${jobId}`)
         .set('Authorization', `Bearer ${employerToken}`)
-        .send({ isActive: false, applicantsCount: 99 });
+        .send({ status: 'filled', isActive: false, applicantsCount: 99 });
 
       expect(res.status).toBe(400);
 
       const persistedJob = await Job.findById(jobId);
       expect(persistedJob.isActive).toBe(true);
       expect(persistedJob.applicantsCount).toBe(0);
+      expect(persistedJob.status).toBe('open');
     });
 
     test('should return 400 when another employer tries to update', async () => {
