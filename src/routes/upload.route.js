@@ -108,7 +108,7 @@ router.get('/signed-url', protect, async (req, res) => {
   res.json({ url: signedUrl, expiresAt: expires_at });
 });
 
-router.post('/', cloudUpload.single('file'), async (req, res) => {
+router.post('/', protect, cloudUpload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
