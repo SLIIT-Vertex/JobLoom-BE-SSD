@@ -9,6 +9,35 @@ const __dirname = path.dirname(__filename);
 // Load environment variables from .env file
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+export const REQUIRED_ENV_VARS = Object.freeze(['MONGODB_URI', 'JWT_SECRET']);
+const MINIMUM_JWT_SECRET_LENGTH = 32;
+const KNOWN_INSECURE_JWT_SECRETS = new Set([
+  'your_jwt_secret',
+  'your-super-secret-jwt-key-change-in-production',
+  'staging_jwt_secret_change_me_in_production',
+  'your_very_strong_jwt_secret_here_min_32_chars',
+  '<replace-with-a-unique-random-secret>',
+]);
+
+const isInvalidJwtSecret = (value) =>
+  typeof value !== 'string' ||
+  value.trim().length < MINIMUM_JWT_SECRET_LENGTH ||
+  KNOWN_INSECURE_JWT_SECRETS.has(value.trim());
+
+export const validateRequiredEnvVars = (environment = process.env) => {
+  const invalid = REQUIRED_ENV_VARS.filter((key) => {
+    const value = environment[key];
+    return key === 'JWT_SECRET' ? isInvalidJwtSecret(value) : !value?.trim();
+  });
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `Missing or invalid required environment variables: ${invalid.join(', ')}\n` +
+        'Please check your .env file.'
+    );
+  }
+};
+
 /**
  * Environment Configuration Service
  * Centralized configuration management with validation
@@ -25,15 +54,7 @@ class EnvConfig {
    * Validate that all required environment variables are set
    */
   validateRequiredEnvVars() {
-    const required = ['MONGODB_URI'];
-    const missing = required.filter((key) => !process.env[key]);
-
-    if (missing.length > 0) {
-      throw new Error(
-        `Missing required environment variables: ${missing.join(', ')}\n` +
-          'Please check your .env file.'
-      );
-    }
+    validateRequiredEnvVars();
   }
 
   /**
@@ -89,7 +110,13 @@ class EnvConfig {
    * Get JWT Secret
    */
   get jwtSecret() {
-    return process.env.JWT_SECRET || 'your_jwt_secret';
+    if (isInvalidJwtSecret(process.env.JWT_SECRET)) {
+      throw new Error(
+        `JWT_SECRET must be at least ${MINIMUM_JWT_SECRET_LENGTH} characters and must not use a known placeholder`
+      );
+    }
+
+    return process.env.JWT_SECRET;
   }
 
   /**
