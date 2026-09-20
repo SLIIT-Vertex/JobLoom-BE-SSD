@@ -40,8 +40,15 @@ jest.unstable_mockModule('jsonwebtoken', () => ({
 }));
 
 // Import service AFTER mocks are registered
-const { registerUser, verifyRegistration, forgotPassword, loginUser } =
+const { registerUser, verifyRegistration, forgotPassword, loginUser, getUserProfile } =
   await import('../../src/modules/users/user.service.js');
+
+/** Build a findById(...).select(fieldString) chain resolving to `user` */
+const mockFindByIdSelect = (user) => {
+  const select = jest.fn().mockResolvedValue(user);
+  mockUserModel.findById.mockReturnValue({ select });
+  return select;
+};
 
 describe('User Service Unit Tests', () => {
   beforeEach(() => {
@@ -183,6 +190,61 @@ describe('User Service Unit Tests', () => {
 
       await expect(loginUser('wrong@test.com', 'pass')).rejects.toThrow(
         'Invalid email or password'
+      );
+    });
+  });
+
+  // V4 — Profile IDOR / Sensitive Data Exposure (fix regression tests)
+
+  describe('getUserProfile', () => {
+    const ownerId = 'user-owner-id';
+    const otherId = 'user-other-id';
+
+    test('should select "-password" only when requester is the profile owner', async () => {
+      const select = mockFindByIdSelect({ _id: ownerId, firstName: 'Owner' });
+
+      await getUserProfile(ownerId, { _id: ownerId, role: 'job_seeker' });
+
+      expect(mockUserModel.findById).toHaveBeenCalledWith(ownerId);
+      expect(select).toHaveBeenCalledWith('-password');
+    });
+
+    test('should select "-password" only when requester is an admin', async () => {
+      const select = mockFindByIdSelect({ _id: otherId, firstName: 'Victim' });
+
+      await getUserProfile(otherId, { _id: 'admin-id', role: 'admin' });
+
+      expect(select).toHaveBeenCalledWith('-password');
+    });
+
+    test('SECURITY: should select only public-safe fields when requester is a different, non-admin user', async () => {
+      const select = mockFindByIdSelect({ _id: otherId, firstName: 'Victim' });
+
+      await getUserProfile(otherId, { _id: 'attacker-id', role: 'job_seeker' });
+
+      const fieldArg = select.mock.calls[0][0];
+      expect(fieldArg).not.toBe('-password');
+      expect(fieldArg).not.toContain('passwordResetOtp');
+      expect(fieldArg).not.toContain('verificationOtp');
+      expect(fieldArg).not.toContain('phone');
+      expect(fieldArg).not.toContain('location');
+    });
+
+    test('SECURITY: should select only public-safe fields when no requester is supplied (unauthenticated)', async () => {
+      const select = mockFindByIdSelect({ _id: otherId, firstName: 'Victim' });
+
+      await getUserProfile(otherId);
+
+      const fieldArg = select.mock.calls[0][0];
+      expect(fieldArg).not.toBe('-password');
+      expect(fieldArg).not.toContain('passwordResetOtp');
+    });
+
+    test('should throw error when user is not found', async () => {
+      mockFindByIdSelect(null);
+
+      await expect(getUserProfile(otherId, { _id: ownerId, role: 'job_seeker' })).rejects.toThrow(
+        'User not found'
       );
     });
   });

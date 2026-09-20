@@ -702,30 +702,27 @@ describe('Application Service — Unit Tests', () => {
   // checkApplicationEligibility
 
   describe('checkApplicationEligibility', () => {
-    test('should return hasAcceptedApplication true when an accepted application exists', async () => {
-      const app = makeApplication({ status: 'accepted' });
-      mockApplicationModel.findOne.mockResolvedValue(app);
+    test('should return hasAcceptedApplication true when an accepted application exists (self-check)', async () => {
+      mockApplicationModel.findOne.mockResolvedValue(makeApplication({ status: 'accepted' }));
 
-      const result = await checkApplicationEligibility(jobId, seekerId);
+      const result = await checkApplicationEligibility(jobId, seekerId, seekerId, 'job_seeker');
 
       expect(result.hasAcceptedApplication).toBe(true);
-      expect(result.application).toBe(app);
     });
 
-    test('should return hasAcceptedApplication false when no accepted application exists', async () => {
+    test('should return hasAcceptedApplication false when no accepted application exists (self-check)', async () => {
       mockApplicationModel.findOne.mockResolvedValue(null);
 
-      const result = await checkApplicationEligibility(jobId, seekerId);
+      const result = await checkApplicationEligibility(jobId, seekerId, seekerId, 'job_seeker');
 
       expect(result.hasAcceptedApplication).toBe(false);
-      expect(result.application).toBeNull();
     });
 
     test('should query using both jobSeekerId and employerId via $or', async () => {
       const userId = oid();
       mockApplicationModel.findOne.mockResolvedValue(null);
 
-      await checkApplicationEligibility(jobId, userId);
+      await checkApplicationEligibility(jobId, userId, userId, 'job_seeker');
 
       expect(mockApplicationModel.findOne).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -734,6 +731,49 @@ describe('Application Service — Unit Tests', () => {
           $or: expect.arrayContaining([{ jobSeekerId: userId }, { employerId: userId }]),
         })
       );
+    });
+
+    // V5 — Public Application Disclosure (fix regression tests)
+
+    test('SECURITY: should never return the raw application document', async () => {
+      const app = makeApplication({
+        status: 'accepted',
+        employerNotes: 'Confidential — must not be returned by this endpoint',
+      });
+      mockApplicationModel.findOne.mockResolvedValue(app);
+
+      const result = await checkApplicationEligibility(jobId, seekerId, seekerId, 'job_seeker');
+
+      expect(result).toEqual({ hasAcceptedApplication: true });
+      expect(result.application).toBeUndefined();
+    });
+
+    test('SECURITY: should throw 403 when requester is checking a different user without admin role', async () => {
+      const otherUserId = oid();
+
+      await expect(
+        checkApplicationEligibility(jobId, seekerId, otherUserId, 'employer')
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        message: 'You are not authorized to check this application',
+      });
+      expect(mockApplicationModel.findOne).not.toHaveBeenCalled();
+    });
+
+    test('SECURITY: should throw 403 when no requester is supplied (unauthenticated call)', async () => {
+      await expect(checkApplicationEligibility(jobId, seekerId)).rejects.toMatchObject({
+        statusCode: 403,
+      });
+      expect(mockApplicationModel.findOne).not.toHaveBeenCalled();
+    });
+
+    test("should allow an admin requester to check a different user's eligibility", async () => {
+      const adminId = oid();
+      mockApplicationModel.findOne.mockResolvedValue(makeApplication({ status: 'accepted' }));
+
+      const result = await checkApplicationEligibility(jobId, seekerId, adminId, 'admin');
+
+      expect(result.hasAcceptedApplication).toBe(true);
     });
   });
 });

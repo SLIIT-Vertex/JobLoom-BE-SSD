@@ -363,4 +363,113 @@ describe('User Routes - Integration Tests', () => {
       expect(expired.status).toBe(401);
     });
   });
+
+  // V4 — Profile IDOR / Sensitive Data Exposure (fix regression tests)
+
+  describe('GET /api/users/profile/:id', () => {
+    const createUser = (overrides = {}) =>
+      User.create({
+        firstName: 'Profile',
+        lastName: 'Tester',
+        email: overrides.email,
+        phone: overrides.phone,
+        password: 'password123',
+        role: 'job_seeker',
+        location: { village: 'A', district: 'B', province: 'C' },
+        isVerified: true,
+        ...overrides,
+      });
+
+    const login = async (email) => {
+      const response = await request(app)
+        .post('/api/users/login')
+        .send({ email, password: 'password123' });
+      expect(response.status).toBe(200);
+      return response.body.token;
+    };
+
+    test('should return the full profile including sensitive fields when viewing your own profile', async () => {
+      const owner = await createUser({
+        email: 'owner@test.com',
+        phone: '94711120001',
+        passwordResetOtp: '999888',
+        passwordResetOtpExpires: new Date(Date.now() + 60_000),
+      });
+      const token = await login('owner@test.com');
+
+      const res = await request(app)
+        .get(`/api/users/profile/${owner._id}`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.phone).toBe('94711120001');
+      expect(res.body.passwordResetOtp).toBe('999888');
+    });
+
+    test("SECURITY: should NOT expose another user's OTP, phone, or location", async () => {
+      const victim = await createUser({
+        email: 'victim@test.com',
+        phone: '94711120002',
+        passwordResetOtp: '123456',
+        passwordResetOtpExpires: new Date(Date.now() + 60_000),
+      });
+      await createUser({ email: 'attacker@test.com', phone: '94711120003' });
+      const attackerToken = await login('attacker@test.com');
+
+      const res = await request(app)
+        .get(`/api/users/profile/${victim._id}`)
+        .set('Authorization', `Bearer ${attackerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.passwordResetOtp).toBeUndefined();
+      expect(res.body.verificationOtp).toBeUndefined();
+      expect(res.body.passwordResetOtpExpires).toBeUndefined();
+      expect(res.body.phone).toBeUndefined();
+      expect(res.body.location).toBeUndefined();
+      expect(res.body.password).toBeUndefined();
+    });
+
+    test("SECURITY: should still return public-safe fields for another user's profile", async () => {
+      const victim = await createUser({ email: 'victim2@test.com', phone: '94711120004' });
+      await createUser({ email: 'attacker2@test.com', phone: '94711120005' });
+      const attackerToken = await login('attacker2@test.com');
+
+      const res = await request(app)
+        .get(`/api/users/profile/${victim._id}`)
+        .set('Authorization', `Bearer ${attackerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.firstName).toBe('Profile');
+      expect(res.body.role).toBe('job_seeker');
+    });
+
+    test("should return the full profile when an admin views another user's profile", async () => {
+      const victim = await createUser({
+        email: 'victim3@test.com',
+        phone: '94711120006',
+        passwordResetOtp: '555555',
+        passwordResetOtpExpires: new Date(Date.now() + 60_000),
+      });
+      const admin = await createUser({ email: 'admin-viewer@test.com', phone: '94711120007' });
+      admin.role = 'admin';
+      await admin.save();
+      const adminToken = await login('admin-viewer@test.com');
+
+      const res = await request(app)
+        .get(`/api/users/profile/${victim._id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.passwordResetOtp).toBe('555555');
+      expect(res.body.phone).toBe('94711120006');
+    });
+
+    test('should return 401 without authentication', async () => {
+      const victim = await createUser({ email: 'victim4@test.com', phone: '94711120008' });
+
+      const res = await request(app).get(`/api/users/profile/${victim._id}`);
+
+      expect(res.status).toBe(401);
+    });
+  });
 });

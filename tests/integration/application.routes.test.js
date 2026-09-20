@@ -497,7 +497,53 @@ describe('Application Routes - Integration Tests', () => {
   // GET /api/applications/check/:jobId/:userId
 
   describe('GET /api/applications/check/:jobId/:userId (review eligibility)', () => {
-    test('should return true when an accepted application exists', async () => {
+    test('should return true when an accepted application exists (self-check)', async () => {
+      await Application.create({
+        jobId,
+        jobSeekerId,
+        employerId,
+        status: 'accepted',
+      });
+
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${jobSeekerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.hasAcceptedApplication).toBe(true);
+      // V5 fix: the raw application document is no longer returned, only the flag.
+      expect(res.body.data.application).toBeUndefined();
+    });
+
+    test('should return false when no accepted application exists (self-check)', async () => {
+      await Application.create({
+        jobId,
+        jobSeekerId,
+        employerId,
+        status: 'pending',
+      });
+
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${jobSeekerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.hasAcceptedApplication).toBe(false);
+    });
+
+    test('should return false when no application exists at all (self-check)', async () => {
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${jobSeekerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.hasAcceptedApplication).toBe(false);
+    });
+
+    // V5 — Public Application Disclosure (fix regression tests)
+
+    test('SECURITY: should reject an unauthenticated request with 401', async () => {
       await Application.create({
         jobId,
         jobSeekerId,
@@ -507,34 +553,69 @@ describe('Application Routes - Integration Tests', () => {
 
       const res = await request(app).get(`/api/applications/check/${jobId}/${jobSeekerId}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.hasAcceptedApplication).toBe(true);
-      expect(res.body.data.application).not.toBeNull();
+      expect(res.status).toBe(401);
     });
 
-    test('should return false when no accepted application exists', async () => {
+    test("SECURITY: should reject a request checking a different user's eligibility with 403", async () => {
       await Application.create({
         jobId,
         jobSeekerId,
         employerId,
-        status: 'pending',
+        status: 'accepted',
       });
 
-      const res = await request(app).get(`/api/applications/check/${jobId}/${jobSeekerId}`);
+      // employer is authenticated, but tries to check the job seeker's eligibility
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${employerToken}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.hasAcceptedApplication).toBe(false);
-      expect(res.body.data.application).toBeNull();
+      expect(res.status).toBe(403);
     });
 
-    test('should return false when no application exists at all', async () => {
-      const fakeUserId = new mongoose.Types.ObjectId();
+    test('SECURITY: should never leak the raw application document, even on a valid self-check', async () => {
+      await Application.create({
+        jobId,
+        jobSeekerId,
+        employerId,
+        status: 'accepted',
+        employerNotes: 'Confidential note that must never be exposed via this endpoint',
+      });
 
-      const res = await request(app).get(`/api/applications/check/${jobId}/${fakeUserId}`);
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${jobSeekerToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.hasAcceptedApplication).toBe(false);
+      expect(Object.keys(res.body.data)).toEqual(['hasAcceptedApplication']);
+    });
+
+    test("should allow an admin to check any user's eligibility", async () => {
+      const admin = await createUserAndLogin({
+        firstName: 'Admin',
+        lastName: 'User',
+        email: 'admin-check@test.com',
+        role: 'job_seeker',
+        phone: '94770000099',
+      });
+      await User.findByIdAndUpdate(admin.userId, { role: 'admin' });
+      const adminLoginRes = await request(app)
+        .post('/api/users/login')
+        .send({ email: 'admin-check@test.com', password: 'password123' });
+      const adminToken = adminLoginRes.body.token;
+
+      await Application.create({
+        jobId,
+        jobSeekerId,
+        employerId,
+        status: 'accepted',
+      });
+
+      const res = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.hasAcceptedApplication).toBe(true);
     });
   });
 
@@ -859,8 +940,10 @@ describe('Application Routes - Integration Tests', () => {
       expect(withdrawRes.status).toBe(400);
       expect(withdrawRes.body.message).toContain('Cannot withdraw');
 
-      // 4. Check endpoint confirms eligibility for reviews
-      const checkRes = await request(app).get(`/api/applications/check/${jobId}/${jobSeekerId}`);
+      // 4. Check endpoint confirms eligibility for reviews (caller must be the checked user)
+      const checkRes = await request(app)
+        .get(`/api/applications/check/${jobId}/${jobSeekerId}`)
+        .set('Authorization', `Bearer ${jobSeekerToken}`);
 
       expect(checkRes.status).toBe(200);
       expect(checkRes.body.data.hasAcceptedApplication).toBe(true);
