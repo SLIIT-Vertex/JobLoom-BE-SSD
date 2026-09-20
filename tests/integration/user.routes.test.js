@@ -13,6 +13,8 @@ const { default: app } = await import('../../src/server.js');
 const { default: User } = await import('../../src/modules/users/user.model.js');
 const { default: RevokedToken } = await import('../../src/modules/users/revoked-token.model.js');
 const { decodeToken, generateToken } = await import('../../src/utils/jwt.utils.js');
+const { clearAuthRateLimitStore } =
+  await import('../../src/middleware/auth-rate-limit.middleware.js');
 
 describe('User Routes - Integration Tests', () => {
   beforeAll(async () => {
@@ -27,8 +29,28 @@ describe('User Routes - Integration Tests', () => {
   });
 
   beforeEach(async () => {
+    clearAuthRateLimitStore();
     await User.deleteMany({});
     await RevokedToken.deleteMany({});
+  });
+
+  test('should rate limit repeated failed login attempts', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await request(app)
+        .post('/api/users/login')
+        .send({ email: 'missing@test.com', password: 'wrongpassword' });
+
+      expect(response.status).toBe(401);
+    }
+
+    const blockedResponse = await request(app)
+      .post('/api/users/login')
+      .send({ email: 'missing@test.com', password: 'wrongpassword' });
+
+    expect(blockedResponse.status).toBe(429);
+    expect(blockedResponse.body.code).toBe('RATE_LIMITED');
+    expect(blockedResponse.headers['retry-after']).toBeDefined();
+    expect(blockedResponse.headers['ratelimit-limit']).toBe('5');
   });
 
   describe('Registration and Verification Flow', () => {
