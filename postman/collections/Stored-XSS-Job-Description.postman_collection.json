@@ -1,0 +1,515 @@
+{
+  "info": {
+    "_postman_id": "c9d0e1f2-stored-xss-job-desc-01",
+    "name": "JobLoom \u2014 Stored XSS Job Description Test",
+    "description": "Tests whether jobs.description is stored without sanitising HTML/script, then retrieved unchanged.\n\nPostman can prove STORAGE. Postman cannot prove BROWSER EXECUTION (alert / document.title / bold rendering).\n\n## Verified against current source\n| Item | Confirmed value | Source |\n| --- | --- | --- |\n| Update endpoint | `PUT /api/jobs/:id` (employer, own jobs) | `job.routes.js:87-94` |\n| Description on update | allowed field; assigned as-is | `job.service.js` `JOB_UPDATE_FIELDS` includes `description`; lines 643-646 |\n| Validation | length >= 20 only; no HTML deny-list | `job.validation.js:188-192` |\n| Sanitizer on jobs | **none** (no DOMPurify / sanitize-html) | backend job module |\n| Public read | `GET /api/jobs/:id` has **no** `protect` | `job.routes.js:75-81` |\n| Frontend render | `parse(job.description)` with `html-react-parser` | `PublicJobDetails.jsx:12,335` and `JobDetails.jsx:4,287` |\n| TipTap UI | editor may escape typed HTML \u2014 send via **API** | `CreateJob.jsx` / `EditJob.jsx` |\n\n## What Postman can conclude\n| Outcome | Wording to use |\n| --- | --- |\n| Tags stored literally in GET `data.description` | **Unsanitized HTML/script is stored.** Code analysis indicates Stored XSS. **Manual browser confirmation is pending.** |\n| Tags escaped (`&lt;b&gt;`) or stripped | Storage path is **not** injecting HTML as stored markup |\n| Alert / tab title | **Not observable in Postman.** Capture M3-V9-05 / 06 / 07 in the browser. |\n\nDo not write \"Confirmed Stored XSS\" until the alert runs in the browser.\n\n## Run order\n00 \u2192 01 \u2192 02 \u2192 03 \u2192 04 \u2192 05 \u2192 06 \u2192 07\nThen open `{{frontendJobUrl}}` for Stage A (bold) and Stage B (alert).\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "frontendUrl",
+      "value": "http://localhost:5173",
+      "type": "string"
+    },
+    {
+      "key": "employerEmail",
+      "value": "seed.employer.basic@jobloom.test",
+      "type": "string"
+    },
+    {
+      "key": "employerPassword",
+      "value": "Test@1234",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "jobId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "frontendJobUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "htmlPayload",
+      "value": "<b>M3-HTML-INJECTION-TEST</b> padding text to satisfy the twenty character minimum.",
+      "type": "string"
+    },
+    {
+      "key": "xssPayload",
+      "value": "<h3>M3 Stored XSS Proof</h3>\n<p>Harmless local test marker.</p>\n<script>\ndocument.title=\"M3-XSS-EXECUTED\";\nalert(\"M3-STORED-XSS-PROOF\");\n</script>",
+      "type": "string"
+    },
+    {
+      "key": "stageAVerdict",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stageBVerdict",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Backend Reachable",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Backend is reachable', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+              "});",
+              "console.log('[00] Backend responded with', pm.response.code);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["health"]
+        },
+        "description": "Confirms the API is up. `/health` is at the server root, not under `/api`."
+      },
+      "response": []
+    },
+    {
+      "name": "01 Login as Employer (auto-saves authToken)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "pm.test('Login returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Login response contains a token', function () {",
+              "  pm.expect(json.token, 'token').to.be.a('string').and.not.empty;",
+              "});",
+              "if (json.token) {",
+              "  pm.collectionVariables.set('authToken', json.token);",
+              "}",
+              "console.log('[01] authToken saved. Length =', String(json.token || '').length);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{employerEmail}}\",\n  \"password\": \"{{employerPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/users/login",
+        "description": "Seed employer: `seed.employer.basic@jobloom.test` / `Test@1234`.\n\nSaves `token` \u2192 `authToken`."
+      },
+      "response": []
+    },
+    {
+      "name": "02 Create target job (plain description)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const job = json.data || {};",
+              "const id = job._id || job.id;",
+              "pm.test('Job created (201)', function () {",
+              "  pm.response.to.have.status(201);",
+              "});",
+              "pm.test('Created job has an id', function () {",
+              "  pm.expect(id, 'job id').to.be.a('string').and.not.empty;",
+              "});",
+              "if (id) {",
+              "  pm.collectionVariables.set('jobId', String(id));",
+              "  const front = (pm.collectionVariables.get('frontendUrl') || 'http://localhost:5173').replace(/\\/$/, '');",
+              "  pm.collectionVariables.set('frontendJobUrl', front + '/jobs/' + id);",
+              "}",
+              "console.log('[02] jobId =', pm.collectionVariables.get('jobId'));",
+              "console.log('[02] Open later in the browser:', pm.collectionVariables.get('frontendJobUrl'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{authToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Stored XSS Evidence Job\",\n  \"description\": \"Plain placeholder description used before HTML injection. Must be at least twenty characters.\",\n  \"category\": \"IT\",\n  \"employmentType\": \"full-time\",\n  \"salaryType\": \"monthly\",\n  \"salaryAmount\": 50000,\n  \"currency\": \"LKR\",\n  \"positions\": 1,\n  \"skillsRequired\": [\n    \"javascript\"\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/jobs",
+        "description": "Creates a job owned by the logged-in employer so you do not need to pick an existing id.\n\nSaves `data._id` \u2192 `jobId` and builds `frontendJobUrl`."
+      },
+      "response": []
+    },
+    {
+      "name": "03 STAGE A \u2014 PUT HTML injection into description",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('jobId')) {",
+              "  throw new Error('jobId is empty. Send request 02 first.');",
+              "}",
+              "if (!pm.collectionVariables.get('authToken')) {",
+              "  throw new Error('authToken is empty. Send request 01 first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const desc = String((json.data && json.data.description) || '');",
+              "pm.test('Update accepted (200)', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response description still contains the <b> tag (not stripped on write)', function () {",
+              "  pm.expect(desc).to.include('<b>M3-HTML-INJECTION-TEST</b>');",
+              "});",
+              "pm.test('Response description is not HTML-escaped (&lt;b&gt;)', function () {",
+              "  pm.expect(desc).to.not.include('&lt;b&gt;M3-HTML-INJECTION-TEST&lt;/b&gt;');",
+              "});",
+              "console.log('[03] SCREENSHOT M3-V9-01 = this request body + 200 response.');",
+              "console.log('[03] description =', desc);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{authToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"<b>M3-HTML-INJECTION-TEST</b> padding text to satisfy the twenty character minimum.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/jobs/{{jobId}}",
+        "description": "## STAGE A write (screenshot M3-V9-01)\n\n`PUT /api/jobs/{{jobId}}` with only `description` (allowed by `checkExact` / `JOB_UPDATE_FIELDS`).\n\n```json\n{ \"description\": \"<b>M3-HTML-INJECTION-TEST</b> padding text to satisfy the twenty character minimum.\" }\n```\n\nSent through the **API**, not TipTap.\n\n## Expected\nHTTP **200** and `data.description` still contains the literal `<b>` tags.\n"
+      },
+      "response": []
+    },
+    {
+      "name": "04 STAGE A \u2014 GET stored HTML (no auth)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('jobId')) {",
+              "  throw new Error('jobId is empty. Send request 02 then 03 first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const desc = String((json.data && json.data.description) || '');",
+              "const hasTag = desc.indexOf('<b>M3-HTML-INJECTION-TEST</b>') !== -1;",
+              "const escaped = desc.indexOf('&lt;b&gt;M3-HTML-INJECTION-TEST&lt;/b&gt;') !== -1;",
+              "let verdict;",
+              "if (hasTag && !escaped) { verdict = 'HTML_STORED_UNSANITIZED'; }",
+              "else if (escaped) { verdict = 'HTML_ESCAPED_ON_READ'; }",
+              "else { verdict = 'INCONCLUSIVE'; }",
+              "pm.collectionVariables.set('stageAVerdict', verdict);",
+              "pm.test('Public GET returns 200 without a token', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Request carried NO Authorization header', function () {",
+              "  const h = pm.request.headers.find(function (x) { return String(x.key).toLowerCase() === 'authorization'; });",
+              "  pm.expect(h, 'authorization header').to.be.undefined;",
+              "});",
+              "pm.test('CONCLUSION \u2192 ' + verdict, function () {",
+              "  pm.expect(verdict).to.be.oneOf(['HTML_STORED_UNSANITIZED', 'HTML_ESCAPED_ON_READ', 'INCONCLUSIVE']);",
+              "});",
+              "pm.test('Stored description still contains raw <b> markup', function () {",
+              "  pm.expect(desc).to.include('<b>M3-HTML-INJECTION-TEST</b>');",
+              "});",
+              "console.log('[04] stageAVerdict =', verdict);",
+              "console.log('[04] description =', desc);",
+              "console.log('[04] NEXT (browser, screenshot M3-V9-02): open', pm.collectionVariables.get('frontendJobUrl'));",
+              "console.log('[04] If the words are BOLD, HTML is interpreted. If you see literal <b> tags, it is escaped.');",
+              "console.log('[04] Postman wording until the browser step: Code analysis indicates Stored XSS and manual browser confirmation is pending.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{baseUrl}}/jobs/{{jobId}}",
+        "description": "## STAGE A read\n\nUnauthenticated `GET /api/jobs/:id` (`job.routes.js:75-81` has no `protect`).\n\nProves the HTML is **stored and returned** to any client.\n\n## After this request\nOpen `{{frontendJobUrl}}` (Vite, default http://localhost:5173/jobs/<id>).\n\n| What you see | Meaning |\n| --- | --- |\n| **M3-HTML-INJECTION-TEST** in bold | HTML interpreted (`parse()`). Capture **M3-V9-02** |\n| Literal `<b>M3-HTML-INJECTION-TEST</b>` | Escaped in the UI \u2014 do not claim HTML injection in the browser |\n\nGET `/api/jobs/:id` sets `Cache-Control: public, max-age=600`. Hard-refresh the job page (DevTools \u2192 Disable cache) so you are not looking at a cached Stage A body later.\n"
+      },
+      "response": []
+    },
+    {
+      "name": "05 STAGE B \u2014 PUT stored XSS script payload",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('jobId')) {",
+              "  throw new Error('jobId is empty. Send request 02 first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const desc = String((json.data && json.data.description) || '');",
+              "pm.test('Update accepted (200)', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response description still contains a <script> tag', function () {",
+              "  pm.expect(desc).to.include('<script>');",
+              "  pm.expect(desc).to.include('M3-STORED-XSS-PROOF');",
+              "  pm.expect(desc).to.include('M3-XSS-EXECUTED');",
+              "});",
+              "console.log('[05] SCREENSHOT M3-V9-03 = this request body.');",
+              "console.log('[05] description =', desc);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{authToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"<h3>M3 Stored XSS Proof</h3>\\n<p>Harmless local test marker.</p>\\n<script>\\ndocument.title=\\\"M3-XSS-EXECUTED\\\";\\nalert(\\\"M3-STORED-XSS-PROOF\\\");\\n</script>\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/jobs/{{jobId}}",
+        "description": "## STAGE B write (screenshot M3-V9-03)\n\nHarmless local proof-of-concept. Sent through the **API** because TipTap escapes HTML typed in the form.\n\n```html\n<h3>M3 Stored XSS Proof</h3>\n<p>Harmless local test marker.</p>\n<script>\ndocument.title=\"M3-XSS-EXECUTED\";\nalert(\"M3-STORED-XSS-PROOF\");\n</script>\n```\n"
+      },
+      "response": []
+    },
+    {
+      "name": "06 STAGE B \u2014 GET stored script (no auth)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const desc = String((json.data && json.data.description) || '');",
+              "const hasScript = desc.indexOf('<script>') !== -1 && desc.indexOf('M3-STORED-XSS-PROOF') !== -1;",
+              "const escaped = desc.indexOf('&lt;script&gt;') !== -1 && desc.indexOf('<script>') === -1;",
+              "let verdict;",
+              "if (hasScript) { verdict = 'SCRIPT_STORED_UNSANITIZED'; }",
+              "else if (escaped) { verdict = 'SCRIPT_ESCAPED_ON_READ'; }",
+              "else { verdict = 'INCONCLUSIVE'; }",
+              "pm.collectionVariables.set('stageBVerdict', verdict);",
+              "pm.test('Public GET returns 200 without a token', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('CONCLUSION \u2192 ' + verdict, function () {",
+              "  pm.expect(verdict).to.be.oneOf(['SCRIPT_STORED_UNSANITIZED', 'SCRIPT_ESCAPED_ON_READ', 'INCONCLUSIVE']);",
+              "});",
+              "pm.test('Stored description contains the raw <script> payload', function () {",
+              "  pm.expect(desc).to.include('<script>');",
+              "  pm.expect(desc).to.include('alert(\"M3-STORED-XSS-PROOF\")');",
+              "  pm.expect(desc).to.include('document.title=\"M3-XSS-EXECUTED\"');",
+              "});",
+              "console.log('[06] SCREENSHOT M3-V9-04 = this response body, data.description showing <script>.');",
+              "console.log('[06] stageBVerdict =', verdict);",
+              "console.log('[06] description =', desc);",
+              "console.log('[06] STOP. Postman cannot show an alert.');",
+              "console.log('[06] Browser next: open', pm.collectionVariables.get('frontendJobUrl'));",
+              "console.log('[06] Disable cache, hard-refresh. Watch for alert M3-STORED-XSS-PROOF and tab title M3-XSS-EXECUTED.');",
+              "console.log('[06] Until that happens, wording remains: Code analysis indicates Stored XSS and manual browser confirmation is pending.');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{baseUrl}}/jobs/{{jobId}}",
+        "description": "## STAGE B stored-read (screenshot M3-V9-04)\n\nUnauthenticated GET. If `data.description` contains the raw `<script>` block, the payload is **stored**.\n\nThat is **not** yet \"Confirmed Stored XSS\". Confirmation requires the job page to execute it:\n\nJob page loads \u2192 description retrieved \u2192 `html-react-parser` `parse()` \u2192 script mounted \u2192 alert + `document.title`.\n\nReact does not always run `<script>` nodes created through `html-react-parser`. If the alert does **not** appear, keep the honest wording and still submit the storage evidence + HTML-injection screenshots.\n"
+      },
+      "response": []
+    },
+    {
+      "name": "07 STAGE B \u2014 GET again (API persistence, no auth)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "const desc = String((json.data && json.data.description) || '');",
+              "pm.test('Second unauthenticated GET still returns the script', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(desc).to.include('<script>');",
+              "  pm.expect(desc).to.include('M3-STORED-XSS-PROOF');",
+              "});",
+              "console.log('[07] API persistence: payload still present on a later GET with no token.');",
+              "console.log('[07] Browser persistence still required: refresh, log out, incognito \u2192 same URL (M3-V9-07).');",
+              "console.log('[07] frontendJobUrl =', pm.collectionVariables.get('frontendJobUrl'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ],
+        "url": "{{baseUrl}}/jobs/{{jobId}}",
+        "description": "Second unauthenticated GET of the same job. Proves the payload is still in `jobs.description` after another read.\n\nIncognito alert replay is still a **browser** step (M3-V9-07)."
+      },
+      "response": []
+    }
+  ]
+}
