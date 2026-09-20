@@ -1,7 +1,8 @@
 import User from './user.model.js';
 import * as smsService from '../../services/sms.service.js';
-import crypto from 'crypto';
+import { randomBytes } from 'node:crypto';
 import { generateToken as jwtGenerateToken } from '../../utils/jwt.utils.js';
+import { generateOtp } from '../../utils/otp.utils.js';
 import { PUBLIC_REGISTRATION_ROLES } from './user.constants.js';
 import { revokeToken } from './token-revocation.service.js';
 
@@ -27,7 +28,7 @@ export const registerUser = async (userData) => {
   }
 
   // Generate OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = generateOtp();
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   const user = await User.create({
@@ -111,7 +112,7 @@ export const forgotPassword = async (phone) => {
   }
 
   // Generate OTP
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = generateOtp();
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   user.passwordResetOtp = otp;
@@ -142,7 +143,7 @@ export const verifyPasswordReset = async (phone, otp) => {
   }
 
   // Generate a temporary reset token to pass to the reset password step
-  const resetToken = crypto.randomBytes(20).toString('hex');
+  const resetToken = randomBytes(20).toString('hex');
   user.passwordResetOtp = resetToken; // Reuse this field or add a new one, let's reuse for simplicity in this flow
   // user.passwordResetOtpExpires remains the same or we could extend it
   await user.save();
