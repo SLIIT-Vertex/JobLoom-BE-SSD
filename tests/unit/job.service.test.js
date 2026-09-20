@@ -173,6 +173,33 @@ describe('Job Service — Unit Tests', () => {
       expect(result.description).toContain('Safe padding text here for create');
     });
 
+    test('should ignore protected fields when called without route validation', async () => {
+      const attackerJobId = oid();
+
+      const result = await createJob(
+        {
+          title: 'Protected Field Test',
+          description: 'A legitimate job description for the protected field test.',
+          employerId: otherEmployerId,
+          _id: attackerJobId,
+          status: 'filled',
+          isActive: false,
+          applicantsCount: 99,
+          createdAt: new Date(0),
+          updatedAt: new Date(0),
+        },
+        employerId.toString()
+      );
+
+      expect(result.employerId).toBe(employerId.toString());
+      expect(result._id).toBe(jobId);
+      expect(result).not.toHaveProperty('status');
+      expect(result).not.toHaveProperty('isActive');
+      expect(result).not.toHaveProperty('applicantsCount');
+      expect(result).not.toHaveProperty('createdAt');
+      expect(result).not.toHaveProperty('updatedAt');
+    });
+
     test('should strip invalid coordinates (empty array) before saving', async () => {
       const jobDataWithBadCoords = {
         title: 'Construction Worker',
@@ -613,6 +640,7 @@ describe('Job Service — Unit Tests', () => {
       await updateJob(jobId.toString(), employerId.toString(), {
         title: 'Legitimate Updated Title',
         employerId: otherEmployerId,
+        status: 'filled',
         isActive: false,
         applicantsCount: 99,
         _id: oid(),
@@ -620,6 +648,7 @@ describe('Job Service — Unit Tests', () => {
 
       expect(job.title).toBe('Legitimate Updated Title');
       expect(job.employerId).toBe(employerId);
+      expect(job.status).toBe('open');
       expect(job.isActive).toBe(true);
       expect(job.applicantsCount).toBe(0);
       expect(job._id).toBe(jobId);

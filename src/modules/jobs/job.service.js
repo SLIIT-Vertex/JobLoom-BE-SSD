@@ -6,7 +6,7 @@ import logger from '../../config/logger.config.js';
 import envConfig from '../../config/env.config.js';
 import { sanitizeJobDescription } from './job-description-sanitize.js';
 
-const JOB_UPDATE_FIELDS = [
+const JOB_WRITABLE_FIELDS = [
   'title',
   'description',
   'category',
@@ -20,10 +20,21 @@ const JOB_UPDATE_FIELDS = [
   'skillsRequired',
   'experienceRequired',
   'positions',
-  'status',
   'startDate',
   'endDate',
 ];
+
+const pickWritableJobFields = (jobData) => {
+  const writableData = {};
+
+  for (const field of JOB_WRITABLE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(jobData, field)) {
+      writableData[field] = jobData[field];
+    }
+  }
+
+  return writableData;
+};
 
 /**
  * Job Service
@@ -277,13 +288,15 @@ export const createJob = async (jobData, employerId) => {
         : 'N/A',
     });
 
-    if (typeof jobData.description === 'string') {
-      jobData.description = sanitizeJobDescription(jobData.description);
+    const createData = pickWritableJobFields(jobData);
+
+    if (typeof createData.description === 'string') {
+      createData.description = sanitizeJobDescription(createData.description);
     }
 
-    // Add employer ID to job data
+    // Ownership, lifecycle state, counters, timestamps, and document IDs are server-owned.
     const job = new Job({
-      ...jobData,
+      ...createData,
       employerId,
     });
 
@@ -649,10 +662,8 @@ export const updateJob = async (jobId, employerId, updateData) => {
 
     // Assign only fields supported by the employer update API. Ownership,
     // counters, soft-delete state, timestamps, and document IDs remain server-owned.
-    for (const field of JOB_UPDATE_FIELDS) {
-      if (Object.prototype.hasOwnProperty.call(updateData, field)) {
-        job[field] = updateData[field];
-      }
+    for (const [field, value] of Object.entries(pickWritableJobFields(updateData))) {
+      job[field] = value;
     }
 
     // Keep category/categoryLabel consistent when category is changed

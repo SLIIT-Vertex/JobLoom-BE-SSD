@@ -126,6 +126,11 @@ export const createJobValidation = [
     .isString()
     .withMessage('Full address must be a string'),
 
+  body('location.coordinates.type')
+    .optional()
+    .equals('Point')
+    .withMessage('Coordinate type must be Point'),
+
   body('location.coordinates.coordinates')
     .optional()
     .isArray({ min: 2, max: 2 })
@@ -171,6 +176,11 @@ export const createJobValidation = [
     .withMessage('Start date must be a valid ISO 8601 date if provided'),
 
   body('endDate').optional().isISO8601().withMessage('End date must be a valid ISO 8601 date'),
+
+  checkExact([], {
+    locations: ['body'],
+    message: 'Unexpected field(s) in job creation',
+  }),
 ];
 
 /**
@@ -268,11 +278,6 @@ export const updateJobValidation = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Positions must be a number between 1 and 100'),
-
-  body('status')
-    .optional()
-    .isIn(JOB_STATUS)
-    .withMessage(`Status must be one of: ${JOB_STATUS.join(', ')}`),
 
   body('startDate').optional().isISO8601().withMessage('Start date must be a valid ISO 8601 date'),
 
