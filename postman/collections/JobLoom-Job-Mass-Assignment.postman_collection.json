@@ -1,0 +1,623 @@
+{
+  "info": {
+    "_postman_id": "b8c4d0f2-job-mass-assignment-01",
+    "name": "JobLoom — Job Mass Assignment Proof",
+    "description": "Automated proof of Job mass assignment on CREATE, plus a check that UPDATE rejects ownership fields.\n\n## Current app behaviour (important)\n- **CREATE (`POST /jobs`)** still spreads the full body into the Job model → internal fields like `applicantsCount` / `status` can be set by the client. **Folder 03 is the main proof.**\n- **UPDATE (`PUT /jobs/:id`)** already rejects unexpected fields (`checkExact` → \"Unexpected field(s) in job update\") and only assigns an allow-list. Injecting `employerId` returns **400**. **Folder 04 documents that block** (tests should pass when secure).\n\n## How to read results\n| Folder | Green tests mean |\n| --- | --- |\n| 01–02 | Setup / baseline OK |\n| **03** | **MASS ASSIGNMENT CONFIRMED on CREATE** |\n| **04** | UPDATE correctly **blocks** `employerId` (not vulnerable on this path) |\n\n## Prerequisites\n1. Backend at `http://localhost:3000`\n2. `npm run seed:basic` in `JobLoom-BE-SSD-main`\n3. Re-import this collection if you still have an older copy\n\n## How to run\nCollection Runner → keep order 01→05 → Run.\n\n## Variables\n| Variable | Default |\n| --- | --- |\n| `baseUrl` | `http://localhost:3000/api` |\n| `employerEmail` | `seed.employer.basic@jobloom.test` |\n| `employerPassword` | `Test@1234` |\n| `seekerEmail` | `seed.seeker.basic@jobloom.test` |\n| `seekerPassword` | `Test@1234` |\n| `token` / `myEmployerId` / `otherUserId` / `jobId` / `ownershipJobId` | auto-filled |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api"
+    },
+    {
+      "key": "employerEmail",
+      "value": "seed.employer.basic@jobloom.test"
+    },
+    {
+      "key": "employerPassword",
+      "value": "Test@1234"
+    },
+    {
+      "key": "seekerEmail",
+      "value": "seed.seeker.basic@jobloom.test"
+    },
+    {
+      "key": "seekerPassword",
+      "value": "Test@1234"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "myEmployerId",
+      "value": ""
+    },
+    {
+      "key": "otherUserId",
+      "value": ""
+    },
+    {
+      "key": "jobId",
+      "value": ""
+    },
+    {
+      "key": "ownershipJobId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Setup",
+      "description": "Authenticate and capture IDs. Run these first. No mass-assignment checks yet.",
+      "item": [
+        {
+          "name": "01A Login as Employer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('Login returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response includes token and _id', function () {",
+                  "  pm.expect(json.token, 'token').to.be.a('string').and.not.empty;",
+                  "  pm.expect(json._id, '_id').to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "if (json.token) {",
+                  "  pm.collectionVariables.set('token', json.token);",
+                  "}",
+                  "if (json._id) {",
+                  "  pm.collectionVariables.set('myEmployerId', String(json._id));",
+                  "}",
+                  "",
+                  "console.log('[Setup] Employer ID =', pm.collectionVariables.get('myEmployerId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{employerEmail}}\",\n  \"password\": \"{{employerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/users/login",
+            "description": "## Input\nUses collection variables:\n- `employerEmail` (default: seed.employer.basic@jobloom.test)\n- `employerPassword` (default: Test@1234)\n\n## Expected\n- Status **200**\n- Body contains `token` and `_id`\n\n## Automated side effects\n- Saves `token` → used as Bearer auth for later requests\n- Saves `myEmployerId` → your employer user id\n\n## If it fails\nRun `npm run seed:basic` in `JobLoom-BE-SSD-main`, or update `employerEmail` / `employerPassword`."
+          },
+          "response": []
+        },
+        {
+          "name": "01B Capture Seeker User ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('Seeker login returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Seeker _id captured (does not overwrite employer token)', function () {",
+                  "  pm.expect(json._id, 'seeker _id').to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "if (json._id) {",
+                  "  pm.collectionVariables.set('otherUserId', String(json._id));",
+                  "}",
+                  "",
+                  "pm.test('Employer token still present', function () {",
+                  "  pm.expect(pm.collectionVariables.get('token')).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "console.log('[Setup] otherUserId (seeker) =', pm.collectionVariables.get('otherUserId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{seekerEmail}}\",\n  \"password\": \"{{seekerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/users/login",
+            "description": "## Purpose\nOnly used to obtain another user's MongoDB `_id` for the later ownership-transfer test.\n\n## Input\n- `seekerEmail` / `seekerPassword` (seed defaults)\n\n## Expected\n- Status **200**\n- Saves seeker `_id` → `otherUserId`\n- Does **not** overwrite the employer `token` from 01A\n\n## Note\nYou can skip this and paste any other user ObjectId into collection variable `otherUserId` manually."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 Baseline — Legitimate Create",
+      "description": "Control case: create a job with only normal employer fields. Confirms defaults before attack payloads.",
+      "item": [
+        {
+          "name": "02 Create Job — Normal Body Only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "function ownerId(jobDoc) {",
+                  "  const e = jobDoc && jobDoc.employerId;",
+                  "  if (!e) return null;",
+                  "  return String((e._id != null) ? e._id : e);",
+                  "}",
+                  "",
+                  "pm.test('Job created with HTTP 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('success flag is true', function () {",
+                  "  pm.expect(json.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test('jobId saved for later requests', function () {",
+                  "  pm.expect(job._id).to.exist;",
+                  "  pm.collectionVariables.set('jobId', String(job._id));",
+                  "  pm.expect(pm.collectionVariables.get('jobId')).to.not.be.empty;",
+                  "});",
+                  "",
+                  "pm.test('Baseline: applicantsCount defaults to 0', function () {",
+                  "  pm.expect(job.applicantsCount).to.eql(0);",
+                  "});",
+                  "",
+                  "pm.test('Baseline: status defaults to open', function () {",
+                  "  pm.expect(job.status).to.eql('open');",
+                  "});",
+                  "",
+                  "pm.test('Baseline: employerId is the logged-in employer', function () {",
+                  "  pm.expect(ownerId(job)).to.eql(String(pm.collectionVariables.get('myEmployerId')));",
+                  "});",
+                  "",
+                  "console.log('[Baseline] jobId =', pm.collectionVariables.get('jobId'));",
+                  "console.log('[Baseline] applicantsCount =', job.applicantsCount, '| status =', job.status);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Mass Assignment Baseline Job\",\n  \"description\": \"Legitimate baseline job description for mass-assignment control testing. Must be at least twenty characters.\",\n  \"category\": \"IT\",\n  \"employmentType\": \"full-time\",\n  \"salaryType\": \"monthly\",\n  \"salaryAmount\": 50000,\n  \"currency\": \"LKR\",\n  \"positions\": 1,\n  \"skillsRequired\": [\"javascript\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/jobs",
+            "description": "## Input (normal employer fields only)\n```json\n{\n  \"title\": \"...\",\n  \"description\": \"... (≥ 20 chars)\",\n  \"category\": \"IT\",\n  \"employmentType\": \"full-time\",\n  \"salaryType\": \"monthly\",\n  \"salaryAmount\": 50000,\n  \"currency\": \"LKR\",\n  \"positions\": 1,\n  \"skillsRequired\": [\"javascript\"]\n}\n```\n\n**Do not** include `applicantsCount`, `status`, `isActive`, or `employerId`.\n\n## Expected (healthy baseline)\n| Check | Expected |\n| --- | --- |\n| HTTP | **201** |\n| `success` | `true` |\n| `data.applicantsCount` | `0` |\n| `data.status` | `\"open\"` |\n| `data.employerId` | your employer id |\n\n## Automated\nSaves `data._id` → `jobId`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 CREATE — Inject Internal Fields",
+      "description": "Attack create: same legitimate fields PLUS internal schema fields that create validation does not allow-list.",
+      "item": [
+        {
+          "name": "03A Create Job — With Internal Fields Injected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "pm.test('Request accepted with HTTP 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "if (job && job._id) {",
+                  "  pm.collectionVariables.set('jobId', String(job._id));",
+                  "}",
+                  "",
+                  "pm.test('MASS ASSIGNMENT CONFIRMED: applicantsCount accepted as 4242', function () {",
+                  "  console.log('applicantsCount =', job.applicantsCount);",
+                  "  pm.expect(job.applicantsCount).to.eql(4242);",
+                  "});",
+                  "",
+                  "pm.test('MASS ASSIGNMENT CONFIRMED: status accepted as filled', function () {",
+                  "  console.log('status =', job.status);",
+                  "  pm.expect(job.status).to.eql('filled');",
+                  "});",
+                  "",
+                  "pm.test('Response includes isActive', function () {",
+                  "  console.log('isActive =', job.isActive);",
+                  "  pm.expect(job.isActive).to.eql(true);",
+                  "});",
+                  "",
+                  "console.log('[Create attack] If the two MASS ASSIGNMENT CONFIRMED tests passed, create is vulnerable.');",
+                  "console.log('[Create attack] jobId =', job._id);",
+                  "console.log('[Create attack] Screenshot this response body for evidence.');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Mass Assignment Create Attack\",\n  \"description\": \"Job create body that injects internal fields employers should not set directly. Padding for length.\",\n  \"category\": \"IT\",\n  \"employmentType\": \"full-time\",\n  \"salaryType\": \"monthly\",\n  \"salaryAmount\": 50000,\n  \"currency\": \"LKR\",\n  \"positions\": 1,\n  \"skillsRequired\": [\"javascript\"],\n  \"applicantsCount\": 4242,\n  \"status\": \"filled\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/jobs",
+            "description": "## Input (normal fields + injected internals)\nSame as baseline, plus:\n```json\n\"applicantsCount\": 4242,\n\"status\": \"filled\",\n\"isActive\": true\n```\n\nThese are real Job schema fields. `createJobValidation` does not allow-list them, but the service spreads the full body into `new Job({ ...jobData, employerId })`.\n\n## Expected if VULNERABLE\n| Check | Value |\n| --- | --- |\n| HTTP | **201** |\n| `data.applicantsCount` | **4242** |\n| `data.status` | **\"filled\"** |\n\nPostman tests named **MASS ASSIGNMENT CONFIRMED** will **pass** when vulnerable.\n\n## Expected if SECURE\n| Outcome | Meaning |\n| --- | --- |\n| 201 with `applicantsCount: 0` and `status: \"open\"` | extras ignored |\n| **or** 400 rejecting forbidden fields | properly rejected |\n\nIn that case the **MASS ASSIGNMENT CONFIRMED** tests **fail** (good)."
+          },
+          "response": []
+        },
+        {
+          "name": "03B Verify Persisted Values via Public GET",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "pm.test('Public GET returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('MASS ASSIGNMENT CONFIRMED: applicantsCount persisted as 4242', function () {",
+                  "  pm.expect(job.applicantsCount).to.eql(4242);",
+                  "});",
+                  "",
+                  "pm.test('MASS ASSIGNMENT CONFIRMED: status persisted as filled', function () {",
+                  "  pm.expect(job.status).to.eql('filled');",
+                  "});",
+                  "",
+                  "console.log('[Persist check] applicantsCount =', job.applicantsCount, '| status =', job.status);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/jobs/{{jobId}}",
+            "description": "## Input\nNo body. No Authorization header.\nUses `jobId` from 03A.\n\n## Purpose\nProves the injected values were **stored in the database**, not only echoed in the create response.\n\n## Expected if vulnerable\n- HTTP **200**\n- `data.applicantsCount` still **4242**\n- `data.status` still **\"filled\"**\n\n## UI cross-check\nEmployer → My Jobs → Applicants column may show **4242** for this job."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 UPDATE — employerId Rejected (control)",
+      "description": "Current code blocks unexpected update fields via checkExact. These tests expect HTTP 400 and unchanged ownership. Green = UPDATE path is protected for employerId.",
+      "item": [
+        {
+          "name": "04A Create Fresh Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "function ownerId(jobDoc) {",
+                  "  const e = jobDoc && jobDoc.employerId;",
+                  "  if (!e) return null;",
+                  "  return String((e._id != null) ? e._id : e);",
+                  "}",
+                  "",
+                  "pm.test('Fresh job created (201)', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('ownershipJobId saved', function () {",
+                  "  pm.expect(job._id).to.exist;",
+                  "  pm.collectionVariables.set('ownershipJobId', String(job._id));",
+                  "});",
+                  "",
+                  "pm.test('Owned by logged-in employer', function () {",
+                  "  pm.expect(ownerId(job)).to.eql(String(pm.collectionVariables.get('myEmployerId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Update Field Rejection Target Job\",\n  \"description\": \"Throwaway job used to verify that employerId cannot be set via PUT job update.\",\n  \"category\": \"IT\",\n  \"employmentType\": \"full-time\",\n  \"salaryType\": \"monthly\",\n  \"salaryAmount\": 40000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/jobs",
+            "description": "## Expected\nHTTP **201**. Saves `ownershipJobId`."
+          },
+          "response": []
+        },
+        {
+          "name": "04B Update — Inject employerId (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const text = pm.response.text();",
+                  "",
+                  "pm.test('UPDATE rejects unexpected employerId with HTTP 400', function () {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Error mentions unexpected field(s) in job update', function () {",
+                  "  const lower = text.toLowerCase();",
+                  "  pm.expect(lower.includes('unexpected field') || lower.includes('validation failed')).to.eql(true);",
+                  "  console.log('Rejection body =', text);",
+                  "});",
+                  "",
+                  "console.log('[Update control] 400 here means employerId mass-assignment on PUT is blocked.');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Attempt Ownership Transfer\",\n  \"description\": \"Harmless update that tries to set employerId — should be rejected by checkExact validation.\",\n  \"employerId\": \"{{otherUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/jobs/{{ownershipJobId}}",
+            "description": "## Input\nIncludes `employerId: {{otherUserId}}`.\n\n## Expected on CURRENT code (secure for this field)\n- HTTP **400**\n- `message`: Validation failed\n- error text: **Unexpected field(s) in job update**\n\n## If you ever get 200 with changed employerId\nThat would mean UPDATE ownership mass assignment is open again."
+          },
+          "response": []
+        },
+        {
+          "name": "04C Verify Owner Unchanged",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "function ownerId(jobDoc) {",
+                  "  const e = jobDoc && jobDoc.employerId;",
+                  "  if (!e) return null;",
+                  "  return String((e._id != null) ? e._id : e);",
+                  "}",
+                  "",
+                  "pm.test('Public GET returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Owner is still the original employer', function () {",
+                  "  pm.expect(ownerId(job)).to.eql(String(pm.collectionVariables.get('myEmployerId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/jobs/{{ownershipJobId}}",
+            "description": "## Expected\n`employerId` still equals `myEmployerId`."
+          },
+          "response": []
+        },
+        {
+          "name": "04D My Jobs — Job Still Present",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const jobs = (json.data && json.data.jobs) ? json.data.jobs : (json.jobs || []);",
+                  "const target = String(pm.collectionVariables.get('ownershipJobId'));",
+                  "const stillMine = jobs.some(function (j) {",
+                  "  return String(j._id) === target;",
+                  "});",
+                  "",
+                  "pm.test('My jobs list returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Job still listed under original employer', function () {",
+                  "  pm.expect(stillMine).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/jobs/employer/my-jobs",
+            "description": "## Expected\nJob **still present** in my-jobs (ownership never changed)."
+          },
+          "response": []
+        },
+        {
+          "name": "04E Normal Title Update Still Works",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const job = json.data || json;",
+                  "",
+                  "pm.test('Normal update returns 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Title updated successfully', function () {",
+                  "  pm.expect(job.title).to.eql('Normal Update Still Allowed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Normal Update Still Allowed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/jobs/{{ownershipJobId}}",
+            "description": "## Expected\nHTTP **200** — legitimate fields still editable; only unexpected fields are rejected."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 Evidence Checklist",
+      "description": "Optional health ping + what to screenshot.",
+      "item": [
+        {
+          "name": "05 Health Check (optional)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Backend is reachable', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:3000/health",
+            "description": "## Evidence to capture for CREATE mass assignment (main proof)\n1. **03A** request body with `applicantsCount` / `status` / `isActive`\n2. **03A** response showing those values accepted\n3. **03B** public GET proving persistence\n4. Code: `new Job({ ...jobData, employerId })` in `job.service.js`\n\n## Optional UPDATE control evidence\n5. **04B** request with `employerId` + **400 Unexpected field(s) in job update**\n\n## Cleanup\n`DELETE /api/jobs/:id` for jobs you still own, or remove in MongoDB."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
